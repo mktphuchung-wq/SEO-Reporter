@@ -95,12 +95,27 @@ export function resolveRange({ startDate, endDate, reportPeriod, defaultEndDate 
   return clampDateRangeByDays(safeDefaultEndDate, 180);
 }
 
-
 const GSC_DATA_DELAY_DAYS = Number.parseInt(process.env.GSC_DATA_DELAY_DAYS || "2", 10);
 
+function getGscDataDelayDays() {
+  return Number.isFinite(GSC_DATA_DELAY_DAYS) && GSC_DATA_DELAY_DAYS >= 0 ? GSC_DATA_DELAY_DAYS : 2;
+}
+
 function getGscDefaultEndDate() {
-  const safeDelayDays = Number.isFinite(GSC_DATA_DELAY_DAYS) && GSC_DATA_DELAY_DAYS >= 0 ? GSC_DATA_DELAY_DAYS : 2;
-  return dayjs().subtract(safeDelayDays, "day").format("YYYY-MM-DD");
+  return dayjs().subtract(getGscDataDelayDays(), "day").format("YYYY-MM-DD");
+}
+
+export function resolveGscRange({ startDate, endDate, reportPeriod } = {}) {
+  return resolveRange({
+    startDate,
+    endDate,
+    reportPeriod,
+    defaultEndDate: getGscDefaultEndDate(),
+  });
+}
+
+function buildGscDataDelayNote(range) {
+  return range?.end ? `GSC data may be delayed; report ends at ${range.end}.` : null;
 }
 
 function isFileNotFoundError(error) {
@@ -174,7 +189,7 @@ export async function loadReportData({
       throw new Error("siteUrl is required when sourceType = gsc");
     }
 
-    const range = resolveRange({ startDate, endDate, reportPeriod, defaultEndDate: getGscDefaultEndDate() });
+    const range = resolveGscRange({ startDate, endDate, reportPeriod });
 
     const comparisonRange = previousRangeFor(range);
     const keywordFetchRange = {
@@ -207,6 +222,7 @@ export async function loadReportData({
       property: siteUrl,
       range,
       keywordRange: keywordFetchRange,
+      dataDelayNote: buildGscDataDelayNote(range),
       filters: {
         reportPeriod: reportPeriod || "custom",
         pageContains: trimmedPageContains,
@@ -217,7 +233,7 @@ export async function loadReportData({
         keywordRowCount: keywordRows.length,
         queryRange: range,
         keywordFetchRange,
-        gscDataDelayDays: Number.isFinite(GSC_DATA_DELAY_DAYS) ? GSC_DATA_DELAY_DAYS : 2,
+        gscDataDelayDays: getGscDataDelayDays(),
       },
     };
   } else {
