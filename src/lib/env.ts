@@ -8,12 +8,24 @@ type GoogleEnv = {
   GOOGLE_GSC_SCOPE: string;
 };
 
+function normalizeEnvValue(value: string): string {
+  const trimmed = value.trim();
+  const first = trimmed.at(0);
+  const last = trimmed.at(-1);
+
+  if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
+}
+
 function requireEnv(name: keyof GoogleEnv): string {
   const value = process.env[name];
   if (!value || value.trim().length === 0) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
-  return value.trim();
+  return normalizeEnvValue(value);
 }
 
 function assertValidUrl(name: keyof GoogleEnv, value: string): void {
