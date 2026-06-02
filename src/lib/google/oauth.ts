@@ -13,6 +13,16 @@ export function generateOAuthState(): string {
   return crypto.randomBytes(32).toString("base64url");
 }
 
+export function isValidOAuthState(receivedState: string | null, expectedState: string | undefined): boolean {
+  if (!receivedState || !expectedState) {
+    return false;
+  }
+
+  const received = Buffer.from(receivedState);
+  const expected = Buffer.from(expectedState);
+  return received.length === expected.length && crypto.timingSafeEqual(received, expected);
+}
+
 export function buildGoogleOAuthUrl(state: string): string {
   const env = getGoogleEnv();
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");

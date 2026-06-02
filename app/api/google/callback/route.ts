@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getGoogleEnv } from "../../../../src/lib/env";
 import { getRequestUserId } from "../../../../src/lib/auth/currentUser";
 import { upsertGoogleTokenForUser } from "../../../../src/lib/db/googleTokens";
-import { exchangeCodeForGoogleToken, getExpiryDate } from "../../../../src/lib/google/oauth";
+import { exchangeCodeForGoogleToken, getExpiryDate, isValidOAuthState } from "../../../../src/lib/google/oauth";
 
 export const runtime = "nodejs";
 
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!code) {
       throw new Error("Missing Google authorization code.");
     }
-    if (!state || !expectedState || state !== expectedState) {
+    if (!isValidOAuthState(state, expectedState)) {
       throw new Error("Invalid Google OAuth state.");
     }
     if (!userId) {
