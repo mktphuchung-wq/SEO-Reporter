@@ -544,7 +544,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
           <div>
             <label>AI Insights</label>
             <div class="note"><input type="checkbox" name="enableAiInsights" value="1" style="width:auto;" ${checked(defaultValues.enableAiInsights)} /> Generate Gemini AI SEO insights when configured</div>
-            <div class="note">Gemini status: <strong>${geminiConfigured ? "configured" : "missing GEMINI_API_KEY"}</strong></div>
+            <div class="note">${geminiConfigured ? "Gemini configured" : "Set GEMINI_API_KEY in environment to enable AI insights."}</div>
           </div>
         </div>
         <div class="actions">
