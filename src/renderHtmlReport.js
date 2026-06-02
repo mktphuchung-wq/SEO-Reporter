@@ -492,7 +492,8 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} })
         <div class="kpi"><span>Keyword rows</span><strong>${formatNumber(diagnostics.keywordRowCount || 0)}</strong></div>
         <div class="kpi"><span>Content rows</span><strong>${formatNumber(diagnostics.contentMetadataRowCount || 0)}</strong></div>
         <div class="kpi"><span>GSC delay days</span><strong>${diagnostics.gscDataDelayDays ?? "—"}</strong></div>
-        <div class="kpi"><span>Page filter applied</span><strong>${yesNo(Boolean(filters.pageContains))}</strong></div>
+        <div class="kpi"><span>Diagnostic search type</span><strong>${escapeHtml(diagnostics.searchType || filters.searchType || "web")}</strong></div>
+        <div class="kpi"><span>Page filter applied</span><strong>${yesNo(Boolean(diagnostics.pageContainsApplied ?? filters.pageContains))}</strong></div>
       </div>
     </section>
 

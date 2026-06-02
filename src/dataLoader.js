@@ -245,6 +245,8 @@ export async function loadReportData({
       diagnostics: {
         pageRowCount: rows.length,
         keywordRowCount: keywordRows.length,
+        pageContainsApplied: Boolean(trimmedPageContains),
+        searchType: normalizedSearchType,
         queryRange: range,
         keywordFetchRange,
         gscDataDelayDays: getGscDataDelayDays(),
