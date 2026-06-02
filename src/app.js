@@ -30,7 +30,10 @@ const GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 const PRODUCTION_APP_ORIGIN = "https://seo-reporter-indol.vercel.app";
 const GOOGLE_OAUTH_CALLBACK_PATH = "/auth/callback";
 const GOOGLE_OAUTH_STATE_COOKIE = "google_oauth_state";
+const GOOGLE_TOKENS_COOKIE = "google_oauth_tokens";
 const GOOGLE_OAUTH_STATE_MAX_AGE_MS = 1000 * 60 * 10;
+const GOOGLE_TOKENS_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
+const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 
 app.set("trust proxy", 1);
 app.use(
@@ -113,6 +116,69 @@ function clearOAuthStateCookie(res) {
   });
 }
 
+function getCookieOptions(maxAge) {
+  return {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: isProduction(),
+    path: "/",
+    maxAge,
+  };
+}
+
+function getTokenEncryptionKey() {
+  return crypto.createHash("sha256").update(SESSION_SECRET).digest();
+}
+
+function encryptGoogleTokens(tokens) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, getTokenEncryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(JSON.stringify(tokens), "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+
+  return [iv, authTag, encrypted].map((value) => value.toString("base64url")).join(".");
+}
+
+function decryptGoogleTokens(value) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const [encodedIv, encodedAuthTag, encodedEncrypted] = String(value).split(".");
+    if (!encodedIv || !encodedAuthTag || !encodedEncrypted) {
+      return null;
+    }
+
+    const decipher = crypto.createDecipheriv(ENCRYPTION_ALGORITHM, getTokenEncryptionKey(), Buffer.from(encodedIv, "base64url"));
+    decipher.setAuthTag(Buffer.from(encodedAuthTag, "base64url"));
+    const decrypted = Buffer.concat([decipher.update(Buffer.from(encodedEncrypted, "base64url")), decipher.final()]);
+    const tokens = JSON.parse(decrypted.toString("utf8"));
+
+    return tokens && typeof tokens === "object" && tokens.access_token ? tokens : null;
+  } catch {
+    return null;
+  }
+}
+
+function readGoogleTokensCookie(req) {
+  return decryptGoogleTokens(parseCookieHeader(req.headers.cookie)[GOOGLE_TOKENS_COOKIE]);
+}
+
+function getGoogleTokens(req) {
+  return req.session?.googleTokens || readGoogleTokensCookie(req);
+}
+
+function setGoogleTokens(req, res, tokens) {
+  req.session.googleTokens = tokens;
+  res.cookie(GOOGLE_TOKENS_COOKIE, encryptGoogleTokens(tokens), getCookieOptions(GOOGLE_TOKENS_MAX_AGE_MS));
+}
+
+function clearGoogleTokens(req, res) {
+  req.session.googleTokens = null;
+  res.clearCookie(GOOGLE_TOKENS_COOKIE, getCookieOptions(0));
+}
+
 function parseCookieHeader(cookieHeader) {
   if (!cookieHeader) {
     return {};
@@ -150,7 +216,7 @@ function createOAuthClient(req) {
 }
 
 function getAuthorizedClient(req) {
-  const tokens = req.session?.googleTokens;
+  const tokens = getGoogleTokens(req);
   if (!tokens) {
     return null;
   }
@@ -189,7 +255,7 @@ async function loadSitesResultForSession(req) {
 }
 
 async function buildGscSitesDebugPayload(req) {
-  const tokens = req.session?.googleTokens;
+  const tokens = getGoogleTokens(req);
   const authenticated = Boolean(tokens);
 
   if (!authenticated) {
@@ -541,7 +607,7 @@ async function finishGoogleAuth(req, res) {
 
     const client = createOAuthClient(req);
     const { tokens } = await client.getToken(String(req.query.code));
-    req.session.googleTokens = tokens;
+    setGoogleTokens(req, res, tokens);
     req.session.oauthState = null;
     clearOAuthStateCookie(res);
     res.redirect("/");
@@ -559,7 +625,7 @@ app.get("/api/google/callback", finishGoogleAuth);
 app.get("/dashboard/integrations/google-search-console", (_req, res) => res.redirect("/"));
 
 app.get("/auth/logout", (req, res) => {
-  req.session.googleTokens = null;
+  clearGoogleTokens(req, res);
   req.session.oauthState = null;
   res.redirect("/");
 });
@@ -569,7 +635,7 @@ app.get("/", async (req, res) => {
   res.type("html").send(
     renderHomePage({
       sites,
-      authenticated: Boolean(req.session.googleTokens),
+      authenticated: Boolean(getGoogleTokens(req)),
       googleApiError,
       defaultValues: {
         ...req.query,
@@ -694,7 +760,7 @@ app.post("/generate", async (req, res) => {
     res.status(400).type("html").send(
       renderHomePage({
         sites,
-        authenticated: Boolean(req.session.googleTokens),
+        authenticated: Boolean(getGoogleTokens(req)),
         defaultValues: req.body,
         error: error instanceof Error ? error.message : "Report generation failed.",
       }),
