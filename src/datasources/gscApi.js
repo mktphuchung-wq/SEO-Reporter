@@ -207,17 +207,26 @@ export async function fetchGscKeywordRows({
   });
 }
 
+export function normalizeGscSiteEntries(entries = []) {
+  return entries
+    .filter((site) => site?.siteUrl || site?.permissionLevel)
+    .map((site) => ({
+      siteUrl: site.siteUrl || "",
+      permissionLevel: site.permissionLevel || "",
+    }))
+    .sort((a, b) => a.siteUrl.localeCompare(b.siteUrl));
+}
+
+export function filterVerifiedGscSiteEntries(entries = []) {
+  return normalizeGscSiteEntries(entries).filter(
+    (site) => site.siteUrl && site.permissionLevel && site.permissionLevel !== "siteUnverifiedUser",
+  );
+}
+
 export async function listGscSites({ authClient, keyFile }) {
   const auth = resolveAuth({ authClient, keyFile });
   const webmasters = google.webmasters({ version: "v3", auth });
   const response = await webmasters.sites.list();
-  const entries = response.data.siteEntry || [];
 
-  return entries
-    .filter((site) => site.siteUrl && site.permissionLevel && site.permissionLevel !== "siteUnverifiedUser")
-    .map((site) => ({
-      siteUrl: site.siteUrl,
-      permissionLevel: site.permissionLevel,
-    }))
-    .sort((a, b) => a.siteUrl.localeCompare(b.siteUrl));
+  return filterVerifiedGscSiteEntries(response.data.siteEntry || []);
 }
