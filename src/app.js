@@ -9,6 +9,7 @@ import { buildSeoInsights } from "./analytics.js";
 import { generateGeminiSeoInsights } from "./ai/geminiInsights.js";
 import { loadReportData } from "./dataLoader.js";
 import { renderHtmlReport } from "./renderHtmlReport.js";
+import { buildKeywordInsightsCsv } from "./exporters/csvExport.js";
 import { filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
 import {
   buildComparableRanges,
@@ -948,6 +949,23 @@ app.get("/debug/gsc-sites", async (req, res) => {
   res.json(await buildGscSitesDebugPayload(req));
 });
 
+app.get("/download/keyword-csv", (req, res) => {
+  const exportPayload = req.session?.keywordCsvExport;
+
+  if (!exportPayload?.csv) {
+    res.status(404).type("text").send("No keyword CSV export is available. Generate a report first.");
+    return;
+  }
+
+  res
+    .status(200)
+    .set({
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${exportPayload.filename || "keyword-insights.csv"}"`,
+    })
+    .send(exportPayload.csv);
+});
+
 app.post("/generate", async (req, res) => {
   try {
     const sourceType = req.body.sourceType || "gsc";
@@ -1009,20 +1027,34 @@ app.post("/generate", async (req, res) => {
     const nearPageOneKeywords = buildNearPageOneKeywords({ keywordRows, currentRange });
     const keywordWinners = buildKeywordWinners({ keywordRows, currentRange, previousRange });
     const ctrOpportunities = buildCtrOpportunities({ keywordRows, currentRange });
-    const geminiInsights = isEmptyReport
-      ? { available: false, message: "AI insight skipped because the selected GSC filters returned no page rows." }
-      : enableAiInsights
-        ? await generateGeminiSeoInsights({
-            sourceInfo,
-            periodCards: insights.periodCards,
-            trackedKeywordMovements,
-            highImpressionDrops,
-            nearPageOneKeywords,
-            keywordWinners,
-            ctrOpportunities,
-            url6MonthInsights: insights.url6MonthInsights,
-          })
-        : { available: false, message: "AI insight not requested." };
+    const geminiInsights = enableAiInsights
+      ? await generateGeminiSeoInsights({
+          sourceInfo,
+          periodCards: insights.periodCards,
+          trackedKeywordMovements,
+          highImpressionDrops,
+          nearPageOneKeywords,
+          keywordWinners,
+          ctrOpportunities,
+          url6MonthInsights: insights.url6MonthInsights,
+        })
+      : { available: false, message: "AI insight not requested." };
+    const keywordInsights = {
+      trackedKeywords,
+      trackedKeywordMovements,
+      highImpressionDrops,
+      nearPageOneKeywords,
+      keywordWinners,
+      ctrOpportunities,
+      currentRange,
+      previousRange,
+      geminiInsights,
+    };
+    const keywordCsv = buildKeywordInsightsCsv(keywordInsights);
+    req.session.keywordCsvExport = {
+      csv: keywordCsv,
+      filename: `keyword-insights-${Date.now()}.csv`,
+    };
 
     const reportHtml = renderHtmlReport({
       insights,
@@ -1042,17 +1074,8 @@ app.post("/generate", async (req, res) => {
           keywordRowCount: sourceInfo.diagnostics?.keywordRowCount ?? keywordRows.length,
         },
       },
-      keywordInsights: {
-        trackedKeywords,
-        trackedKeywordMovements,
-        highImpressionDrops,
-        nearPageOneKeywords,
-        keywordWinners,
-        ctrOpportunities,
-        currentRange,
-        previousRange,
-        geminiInsights,
-      },
+      keywordInsights,
+      keywordCsvDownloadUrl: "/download/keyword-csv",
     });
 
     try {

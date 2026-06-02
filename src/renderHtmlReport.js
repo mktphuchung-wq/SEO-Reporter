@@ -155,7 +155,7 @@ function rowsToTable(items, mapper) {
   </table>`;
 }
 
-export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} }) {
+export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, keywordCsvDownloadUrl = "" }) {
   const publishing = insights.thisMonthPublishing;
   const trend30 = insights.trending30Days;
   const sixMonths = insights.url6MonthInsights;
@@ -441,6 +441,29 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} })
       color: var(--muted);
     }
 
+    .report-actions {
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: flex-start;
+    }
+
+    .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 10px 14px;
+      color: #fff;
+      background: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+      box-shadow: 0 10px 24px rgba(21, 96, 100, 0.22);
+    }
+
+    .download-link:hover {
+      background: #0f4c50;
+    }
+
     @media (max-width: 700px) {
       .wrapper { width: 94vw; }
       header, section { padding: 14px; }
@@ -450,6 +473,7 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} })
 </head>
 <body>
   <div class="wrapper">
+    ${keywordCsvDownloadUrl ? `<div class="report-actions"><a class="download-link" href="${escapeHtml(keywordCsvDownloadUrl)}">Download keyword CSV</a></div>` : ""}
     <header>
       <h1>SEO Insight Report</h1>
       <div class="meta">
