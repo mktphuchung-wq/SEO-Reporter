@@ -9,7 +9,7 @@ import { buildSeoInsights } from "./analytics.js";
 import { generateGeminiSeoInsights } from "./ai/geminiInsights.js";
 import { loadReportData } from "./dataLoader.js";
 import { renderHtmlReport } from "./renderHtmlReport.js";
-import { listGscSites } from "./datasources/gscApi.js";
+import { filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
 import {
   buildComparableRanges,
   buildCtrOpportunities,
@@ -209,16 +209,8 @@ async function buildGscSitesDebugPayload(req) {
     const authClient = getAuthorizedClient(req);
     const webmasters = google.webmasters({ version: "v3", auth: authClient });
     const response = await webmasters.sites.list();
-    const rawSiteEntries = (response.data.siteEntry || [])
-      .filter((site) => site.siteUrl || site.permissionLevel)
-      .map((site) => ({
-        siteUrl: site.siteUrl || "",
-        permissionLevel: site.permissionLevel || "",
-      }))
-      .sort((a, b) => a.siteUrl.localeCompare(b.siteUrl));
-    const filteredSiteEntries = rawSiteEntries.filter(
-      (site) => site.siteUrl && site.permissionLevel && site.permissionLevel !== "siteUnverifiedUser",
-    );
+    const rawSiteEntries = normalizeGscSiteEntries(response.data.siteEntry || []);
+    const filteredSiteEntries = filterVerifiedGscSiteEntries(rawSiteEntries);
 
     return {
       authenticated: true,
