@@ -135,6 +135,9 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} })
   const geminiInsights = keywordInsights.geminiInsights || { available: false, message: "AI insight not requested." };
   const filters = sourceInfo.filters || {};
   const diagnostics = sourceInfo.diagnostics || {};
+  const dataDelayNote = sourceInfo.dataDelayNote || (diagnostics.gscDataDelayDays != null && sourceInfo.range?.end
+    ? `GSC data may be delayed; report ends at ${sourceInfo.range.end}.`
+    : null);
 
   const chartPayload = {
     dailyLabels: perf.dailySeries.map((x) => x.date),
@@ -432,6 +435,7 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} })
 
     <section>
       <h2>Active Filters</h2>
+      ${dataDelayNote ? `<p class="note-box" style="margin-bottom:10px;">${escapeHtml(dataDelayNote)}</p>` : ""}
       <div class="kpis">
         <div class="kpi"><span>Property</span><strong>${escapeHtml(sourceInfo.property || "—")}</strong></div>
         <div class="kpi"><span>Search type</span><strong>${escapeHtml(filters.searchType || "web")}</strong></div>
