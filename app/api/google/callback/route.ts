@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getGoogleEnv } from "../../../../src/lib/env";
+import { getGoogleEnv, getNormalizedGoogleEnvValue } from "../../../../src/lib/env";
 import { getRequestUserId } from "../../../../src/lib/auth/currentUser";
 import { upsertGoogleTokenForUser } from "../../../../src/lib/db/googleTokens";
 import { exchangeCodeForGoogleToken, getExpiryDate, isValidOAuthState } from "../../../../src/lib/google/oauth";
@@ -8,9 +8,22 @@ export const runtime = "nodejs";
 
 const OAUTH_STATE_COOKIE = "google_oauth_state";
 
+function getSafeAppUrl(fallbackOrigin: string): string {
+  const configuredAppUrl = getNormalizedGoogleEnvValue("NEXT_PUBLIC_APP_URL");
+  if (!configuredAppUrl) {
+    return fallbackOrigin;
+  }
+
+  try {
+    return new URL(configuredAppUrl).toString();
+  } catch {
+    return fallbackOrigin;
+  }
+}
+
 function redirectToDashboard(request: NextRequest, status: "connected" | "error", message?: string): NextResponse {
   const fallbackOrigin = new URL(request.url).origin;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || fallbackOrigin;
+  const appUrl = getSafeAppUrl(fallbackOrigin);
   const url = new URL("/dashboard/integrations/google-search-console", appUrl);
   url.searchParams.set("google", status);
   if (message) {
