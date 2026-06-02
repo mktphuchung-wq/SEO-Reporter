@@ -737,6 +737,7 @@ app.post("/generate", async (req, res) => {
     };
 
     const { rows, keywordRows, contentRows, sourceInfo } = await loadReportData(input);
+    const isEmptyReport = Boolean(sourceInfo.emptyReason || sourceInfo.diagnostics?.emptyReason);
     const insights = buildSeoInsights({
       rows,
       contentRows,
@@ -753,18 +754,20 @@ app.post("/generate", async (req, res) => {
     const nearPageOneKeywords = buildNearPageOneKeywords({ keywordRows, currentRange });
     const keywordWinners = buildKeywordWinners({ keywordRows, currentRange, previousRange });
     const ctrOpportunities = buildCtrOpportunities({ keywordRows, currentRange });
-    const geminiInsights = enableAiInsights
-      ? await generateGeminiSeoInsights({
-          sourceInfo,
-          periodCards: insights.periodCards,
-          trackedKeywordMovements,
-          highImpressionDrops,
-          nearPageOneKeywords,
-          keywordWinners,
-          ctrOpportunities,
-          url6MonthInsights: insights.url6MonthInsights,
-        })
-      : { available: false, message: "AI insight not requested." };
+    const geminiInsights = isEmptyReport
+      ? { available: false, message: "AI insight skipped because the selected GSC filters returned no page rows." }
+      : enableAiInsights
+        ? await generateGeminiSeoInsights({
+            sourceInfo,
+            periodCards: insights.periodCards,
+            trackedKeywordMovements,
+            highImpressionDrops,
+            nearPageOneKeywords,
+            keywordWinners,
+            ctrOpportunities,
+            url6MonthInsights: insights.url6MonthInsights,
+          })
+        : { available: false, message: "AI insight not requested." };
 
     const reportHtml = renderHtmlReport({
       insights,
@@ -777,6 +780,11 @@ app.post("/generate", async (req, res) => {
           pageContains,
           searchType: input.searchType || "web",
           trackedKeywordCount: trackedKeywords.length,
+        },
+        diagnostics: {
+          ...(sourceInfo.diagnostics || {}),
+          pageRowCount: sourceInfo.diagnostics?.pageRowCount ?? rows.length,
+          keywordRowCount: sourceInfo.diagnostics?.keywordRowCount ?? keywordRows.length,
         },
       },
       keywordInsights: {

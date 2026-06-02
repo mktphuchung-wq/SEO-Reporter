@@ -108,6 +108,39 @@ function yesNo(value) {
   return value ? "Yes" : "No";
 }
 
+
+function renderEmptyReportSection({ sourceInfo, filters, diagnostics }) {
+  const emptyReason = sourceInfo.emptyReason || diagnostics.emptyReason || diagnostics.emptyDataWarning;
+  if (!emptyReason) {
+    return "";
+  }
+
+  const dateRange = sourceInfo.range ? `${sourceInfo.range.start} -> ${sourceInfo.range.end}` : "—";
+  const pageContains = filters.pageContains || "None";
+
+  return `
+    <section class="empty-report">
+      <h2>Empty Report Diagnostics</h2>
+      <p class="note-box" style="border-color: rgba(179,54,54,.45); background: rgba(179,54,54,.09);">${escapeHtml(emptyReason)}</p>
+      <div class="kpis" style="margin-top:10px;">
+        <div class="kpi"><span>Property</span><strong>${escapeHtml(sourceInfo.property || "—")}</strong></div>
+        <div class="kpi"><span>Date range</span><strong>${escapeHtml(dateRange)}</strong></div>
+        <div class="kpi"><span>Search type</span><strong>${escapeHtml(filters.searchType || "web")}</strong></div>
+        <div class="kpi"><span>Page contains</span><strong>${escapeHtml(pageContains)}</strong></div>
+        <div class="kpi"><span>Page rows received</span><strong>${formatNumber(diagnostics.pageRowCount || 0)}</strong></div>
+        <div class="kpi"><span>Keyword rows received</span><strong>${formatNumber(diagnostics.keywordRowCount || 0)}</strong></div>
+      </div>
+      <div class="note-box" style="margin-top:10px;">
+        <strong>Suggested next tries</strong>
+        <ul>
+          <li>Remove or relax the URL filter, especially <code>/ten-su-kien/</code>, then generate again.</li>
+          <li>Select a wider date range so Search Console has more matching page data to return.</li>
+          <li>Use an end date that is 2–3 days earlier to avoid fresh GSC data delays.</li>
+        </ul>
+      </div>
+    </section>`;
+}
+
 function rowsToTable(items, mapper) {
   if (!items.length) {
     return '<p class="empty">No data</p>';
@@ -442,6 +475,8 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} })
       </div>
       <p class="note-box" style="margin-top:10px;">For average position, lower is better.</p>
     </section>
+
+    ${renderEmptyReportSection({ sourceInfo, filters, diagnostics })}
 
     <section>
       <h2>GSC Diagnostics</h2>
