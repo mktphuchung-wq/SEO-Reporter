@@ -4,8 +4,8 @@
   "description": "SEO reporting app from GSC API or Looker CSV with HTML visual insights",
   "main": "src/server.js",
   "scripts": {
-    "start": "next start",
-    "dev": "next dev",
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
     "generate": "node src/cli.js",
     "build": "next build",
     "express:start": "node src/server.js",

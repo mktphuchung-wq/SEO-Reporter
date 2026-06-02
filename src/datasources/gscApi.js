@@ -2,9 +2,9 @@ import { google } from "googleapis";
 import path from "node:path";
 
 const GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
-const MAX_ROW_LIMIT = 25000;
+export const MAX_ROW_LIMIT = 25000;
 
-function normalizeRow(row) {
+function normalizePageRow(row) {
   const keys = row.keys || [];
   const date = keys[0];
   const url = keys[1];
@@ -15,6 +15,27 @@ function normalizeRow(row) {
 
   return {
     date,
+    url,
+    clicks: Number(row.clicks || 0),
+    impressions: Number(row.impressions || 0),
+    ctr: Number(row.ctr || 0),
+    position: Number(row.position || 0),
+  };
+}
+
+function normalizeKeywordRow(row) {
+  const keys = row.keys || [];
+  const date = keys[0];
+  const query = keys[1];
+  const url = keys[2];
+
+  if (!date || !query || !url) {
+    return null;
+  }
+
+  return {
+    date,
+    query,
     url,
     clicks: Number(row.clicks || 0),
     impressions: Number(row.impressions || 0),
@@ -38,25 +59,36 @@ function resolveAuth({ authClient, keyFile }) {
   });
 }
 
-export async function fetchGscRows({
+function buildPageContainsFilter(pageContains) {
+  const expression = String(pageContains || "").trim();
+  if (!expression) {
+    return undefined;
+  }
+
+  return [
+    {
+      filters: [
+        {
+          dimension: "page",
+          operator: "contains",
+          expression,
+        },
+      ],
+    },
+  ];
+}
+
+async function fetchSearchAnalyticsRows({
   siteUrl,
   startDate,
   endDate,
-  searchType = "web",
-  keyFile,
-  authClient,
+  searchType,
+  auth,
+  dimensions,
+  pageContains,
+  normalizer,
 }) {
-  if (!siteUrl) {
-    throw new Error("Missing siteUrl for GSC request.");
-  }
-
-  if (!startDate || !endDate) {
-    throw new Error("startDate and endDate are required for GSC request.");
-  }
-
-  const auth = resolveAuth({ authClient, keyFile });
   const webmasters = google.webmasters({ version: "v3", auth });
-
   const allRows = [];
   let startRow = 0;
 
@@ -66,16 +98,16 @@ export async function fetchGscRows({
       requestBody: {
         startDate,
         endDate,
-        dimensions: ["date", "page"],
+        dimensions,
         type: searchType,
         rowLimit: MAX_ROW_LIMIT,
         startRow,
+        ...(pageContains ? { dimensionFilterGroups: buildPageContainsFilter(pageContains) } : {}),
       },
     });
 
     const rows = response.data.rows || [];
-    const normalized = rows.map(normalizeRow).filter(Boolean);
-    allRows.push(...normalized);
+    allRows.push(...rows.map(normalizer).filter(Boolean));
 
     if (rows.length < MAX_ROW_LIMIT) {
       break;
@@ -84,6 +116,95 @@ export async function fetchGscRows({
   }
 
   return allRows;
+}
+
+async function fetchWithOptionalPageFilter({ siteUrl, startDate, endDate, searchType, keyFile, authClient, dimensions, normalizer, pageContains }) {
+  if (!siteUrl) {
+    throw new Error("Missing siteUrl for GSC request.");
+  }
+
+  if (!startDate || !endDate) {
+    throw new Error("startDate and endDate are required for GSC request.");
+  }
+
+  const auth = resolveAuth({ authClient, keyFile });
+  const trimmedFilter = String(pageContains || "").trim();
+
+  if (!trimmedFilter) {
+    return fetchSearchAnalyticsRows({ siteUrl, startDate, endDate, searchType, auth, dimensions, normalizer });
+  }
+
+  try {
+    return await fetchSearchAnalyticsRows({
+      siteUrl,
+      startDate,
+      endDate,
+      searchType,
+      auth,
+      dimensions,
+      normalizer,
+      pageContains: trimmedFilter,
+    });
+  } catch (filteredError) {
+    try {
+      const unfilteredRows = await fetchSearchAnalyticsRows({
+        siteUrl,
+        startDate,
+        endDate,
+        searchType,
+        auth,
+        dimensions,
+        normalizer,
+      });
+      return unfilteredRows.filter((row) => String(row.url || "").includes(trimmedFilter));
+    } catch (_unfilteredError) {
+      throw filteredError;
+    }
+  }
+}
+
+export async function fetchGscRows({
+  siteUrl,
+  startDate,
+  endDate,
+  searchType = "web",
+  keyFile,
+  authClient,
+  pageContains,
+}) {
+  return fetchWithOptionalPageFilter({
+    siteUrl,
+    startDate,
+    endDate,
+    searchType,
+    keyFile,
+    authClient,
+    pageContains,
+    dimensions: ["date", "page"],
+    normalizer: normalizePageRow,
+  });
+}
+
+export async function fetchGscKeywordRows({
+  siteUrl,
+  startDate,
+  endDate,
+  searchType = "web",
+  keyFile,
+  authClient,
+  pageContains,
+}) {
+  return fetchWithOptionalPageFilter({
+    siteUrl,
+    startDate,
+    endDate,
+    searchType,
+    keyFile,
+    authClient,
+    pageContains,
+    dimensions: ["date", "query", "page"],
+    normalizer: normalizeKeywordRow,
+  });
 }
 
 export async function listGscSites({ authClient, keyFile }) {
@@ -100,4 +221,3 @@ export async function listGscSites({ authClient, keyFile }) {
     }))
     .sort((a, b) => a.siteUrl.localeCompare(b.siteUrl));
 }
-

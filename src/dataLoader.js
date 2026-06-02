@@ -1,5 +1,5 @@
-﻿import path from "node:path";
-import { fetchGscRows } from "./datasources/gscApi.js";
+import path from "node:path";
+import { fetchGscKeywordRows, fetchGscRows } from "./datasources/gscApi.js";
 import { loadContentMetadataRows, loadLookerCsvRows } from "./lib/csv.js";
 import dayjs, { clampDateRangeByDays, parseDate } from "./lib/time.js";
 
@@ -63,7 +63,12 @@ function findDateSpan(rows) {
   return { start: min, end: max };
 }
 
-function resolveRange({ startDate, endDate }) {
+export function resolveRange({ startDate, endDate, reportPeriod } = {}) {
+  const periodDays = REPORT_PERIOD_DAYS[reportPeriod];
+  if (periodDays) {
+    return clampDateRangeByDays(dayjs().format("YYYY-MM-DD"), periodDays);
+  }
+
   const parsedStart = parseDate(startDate);
   const parsedEnd = parseDate(endDate);
 
@@ -88,6 +93,28 @@ function resolveRange({ startDate, endDate }) {
   return clampDateRangeByDays(dayjs().format("YYYY-MM-DD"), 180);
 }
 
+const REPORT_PERIOD_DAYS = {
+  "7d": 7,
+  "30d": 30,
+  "90d": 90,
+  "180d": 180,
+};
+
+function countDaysInclusive(startDate, endDate) {
+  const start = parseDate(startDate);
+  const end = parseDate(endDate);
+  if (!start || !end || end.isBefore(start, "day")) {
+    return 30;
+  }
+  return end.diff(start, "day") + 1;
+}
+
+function previousRangeFor(range) {
+  const days = countDaysInclusive(range.start, range.end);
+  const previousEnd = dayjs(range.start).subtract(1, "day").format("YYYY-MM-DD");
+  return clampDateRangeByDays(previousEnd, days);
+}
+
 export async function loadReportData({
   sourceType,
   siteUrl,
@@ -96,11 +123,16 @@ export async function loadReportData({
   searchType,
   startDate,
   endDate,
+  reportPeriod,
+  pageContains,
   gscKeyFile,
   authClient,
 }) {
   const normalizedType = (sourceType || "looker").toLowerCase();
+  const normalizedSearchType = (searchType || "web").toLowerCase();
+  const trimmedPageContains = String(pageContains || "").trim();
   let rows = [];
+  let keywordRows = [];
   let sourceInfo;
 
   if (normalizedType === "gsc") {
@@ -108,21 +140,44 @@ export async function loadReportData({
       throw new Error("siteUrl is required when sourceType = gsc");
     }
 
-    const range = resolveRange({ startDate, endDate });
+    const range = resolveRange({ startDate, endDate, reportPeriod });
+
+    const comparisonRange = previousRangeFor(range);
+    const keywordFetchRange = {
+      start: comparisonRange.start,
+      end: range.end,
+    };
 
     rows = await fetchGscRows({
       siteUrl,
       startDate: range.start,
       endDate: range.end,
-      searchType: (searchType || "web").toLowerCase(),
+      searchType: normalizedSearchType,
       keyFile: gscKeyFile,
       authClient,
+      pageContains: trimmedPageContains,
+    });
+
+    keywordRows = await fetchGscKeywordRows({
+      siteUrl,
+      startDate: keywordFetchRange.start,
+      endDate: keywordFetchRange.end,
+      searchType: normalizedSearchType,
+      keyFile: gscKeyFile,
+      authClient,
+      pageContains: trimmedPageContains,
     });
 
     sourceInfo = {
       label: "Google Search Console API",
       property: siteUrl,
       range,
+      keywordRange: keywordFetchRange,
+      filters: {
+        reportPeriod: reportPeriod || "custom",
+        pageContains: trimmedPageContains,
+        searchType: normalizedSearchType,
+      },
     };
   } else {
     if (!lookerCsvPath) {
@@ -134,18 +189,28 @@ export async function loadReportData({
     const span = findDateSpan(rows);
 
     if (startDate || endDate) {
-      const range = resolveRange({ startDate: startDate || span?.start, endDate: endDate || span?.end });
+      const range = resolveRange({ startDate: startDate || span?.start, endDate: endDate || span?.end, reportPeriod });
       rows = rows.filter((row) => row.date >= range.start && row.date <= range.end);
       sourceInfo = {
         label: "Looker CSV Export",
         property: absoluteLookerPath,
         range,
+        filters: {
+          reportPeriod: reportPeriod || "custom",
+          pageContains: trimmedPageContains,
+          searchType: normalizedSearchType,
+        },
       };
     } else {
       sourceInfo = {
         label: "Looker CSV Export",
         property: absoluteLookerPath,
         range: span,
+        filters: {
+          reportPeriod: reportPeriod || "custom",
+          pageContains: trimmedPageContains,
+          searchType: normalizedSearchType,
+        },
       };
     }
   }
@@ -159,6 +224,7 @@ export async function loadReportData({
 
   return {
     rows: coalesced,
+    keywordRows,
     contentRows,
     sourceInfo,
   };
