@@ -1,118 +1,129 @@
-# SEO Report App (GSC / Looker CSV)
+# SEO Report App (Express / Vercel Serverless)
 
-SEO reporting app with weekly, monthly, 3-month, and 6-month insights.
+SEO Reporter is an Express-based reporting app that can generate HTML SEO reports from Google Search Console API data or the bundled Looker-style CSV sample data. It keeps the existing Express entry points:
+
+- Local app: `src/server.js`
+- Main Express app: `src/app.js`
+- Vercel serverless entry: `api/index.js`
+- Vercel routing: `vercel.json` rewrites all paths to the Express serverless function so `/` shows the Express SEO Reporter UI instead of the legacy Next.js shell.
 
 ## Features
 
-- This month publishing summary (count, topic, URL)
-- Last 3 months SEO performance
-- Trending up/down URLs in last 30 days
-- 6-month URL movement signals
-- Custom Google OAuth 2.0 flow for Google Search Console, without NextAuth/Auth.js
-- Search Console property listing and Search Analytics API routes
+- Google OAuth sign-in for Search Console reporting.
+- Search Console property selection with visible permission level.
+- Report period selector:
+  - 1 week (`7d`)
+  - 1 month (`30d`)
+  - 3 months (`90d`)
+  - 6 months (`180d`)
+  - custom start/end dates
+- Event/page URL filtering with `pageContains` (for example `/ten-su-kien/`).
+- Page-level GSC reporting and keyword-level GSC reporting.
+- Tracked keyword input with one keyword per line or comma-separated keywords.
+- Keyword movement analysis across comparable current/previous periods.
+- Automatic keyword opportunity sections:
+  - high-impression ranking drops
+  - high-impression keywords near page 1
+  - CTR opportunities
+  - keyword winners
+- Existing URL trend, publishing, and 6-month movement sections.
+- Optional Gemini AI SEO insights in Vietnamese when `GEMINI_API_KEY` is configured.
 
-## Local Setup
+## Environment Variables
+
+Copy `.env.example` to `.env` for local development and fill in values that already belong to your environment. Do not commit real secrets, API keys, OAuth tokens, or service account files.
+
+Required for Google OAuth/GSC usage:
+
+```bash
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:3000/auth/callback
+GOOGLE_GSC_SCOPE=https://www.googleapis.com/auth/webmasters.readonly
+SESSION_SECRET=replace-with-a-random-local-secret
+```
+
+Optional:
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_MODEL=gemini-1.5-flash
+```
+
+`GEMINI_API_KEY` is optional. If it is not configured, the report still renders and shows an AI-unavailable note.
+
+## Local Test Instructions
+
+Install dependencies:
 
 ```bash
 npm install
-npm run dev
 ```
 
-Open `http://localhost:3000`.
-
-## Google Search Console OAuth Setup
-
-Required environment variables:
+Start the Express app:
 
 ```bash
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-GOOGLE_REDIRECT_URI=http://localhost:3000/api/google/callback # optional fallback outside OAuth route handlers
-GOOGLE_GSC_SCOPE=https://www.googleapis.com/auth/webmasters.readonly
+npm start
 ```
 
-`NEXT_PUBLIC_APP_URL` is used only as the post-OAuth redirect origin. During the OAuth browser flow, the app now sends Google a callback URL based on the domain that received `/api/google/connect` (for example `https://your-domain.vercel.app/api/google/callback`) so Vercel production/custom domains do not accidentally use a stale preview-domain redirect URI. `GOOGLE_REDIRECT_URI` remains useful as a fallback for server-side helpers, but the active callback URL still must be added exactly in Google Cloud Console. If an environment value is accidentally pasted with extra text, the app normalizes the URL before using it. The `npm warn deprecated node-domexception@1.0.0` message is emitted by a transitive dependency during install and is not the cause of the app URL validation error.
+Open the home page:
 
-Optional local token database path:
-
-```bash
-GOOGLE_TOKEN_DB_PATH=.data/google-tokens.json
+```text
+http://localhost:3000
 ```
 
-> Do not commit Google client secrets or Google OAuth tokens. If a secret is exposed, rotate it in Google Cloud Console before deploying.
+Generate a sample report without Google credentials by choosing `Looker CSV` and keeping the sample paths:
 
-## Google Cloud redirect URI
+- Looker CSV path: `samples/gsc-looker-sample.csv`
+- Content metadata CSV path: `samples/content-sample.csv`
 
-For local development, add this redirect URI to the Google OAuth client:
+To test the GSC reporting flow locally after OAuth environment variables are present:
 
-`http://localhost:3000/api/google/callback`
+1. Open `/`.
+2. Click **Authenticate Google**.
+3. Confirm the page shows **Google connected**.
+4. Select a Search Console property.
+5. Confirm the property permission level is visible under the selector.
+6. Choose a report period or custom dates.
+7. Optionally enter a page URL filter such as `/ten-su-kien/`.
+8. Optionally enter tracked keywords, one per line or separated by commas.
+9. Optionally enable Gemini AI insights if `GEMINI_API_KEY` is configured.
+10. Submit **Generate HTML Report**.
 
-For the current Vercel deployment, set:
+## Report Sections
 
-```bash
-NEXT_PUBLIC_APP_URL="https://seo-reporter-git-main-hung-s-projects17xx.vercel.app/"
-GOOGLE_REDIRECT_URI=https://seo-reporter-git-main-hung-s-projects17xx.vercel.app/api/google/callback
-```
+The generated HTML report includes the existing SEO sections plus new GSC keyword sections:
 
-and add this exact redirect URI in Google Cloud OAuth client settings:
+- Active filters: property, search type, date range, report period, page filter, tracked keyword count.
+- Tracked Keyword Ranking Movement.
+- High Impression Keywords With Ranking Drop.
+- High Impression Keywords Near Page 1.
+- CTR Opportunity Keywords.
+- Keyword Winners.
+- Gemini AI SEO Insights when enabled and configured.
 
-`https://seo-reporter-git-main-hung-s-projects17xx.vercel.app/api/google/callback`
-
-If you later promote a different production domain, add the exact new callback URI in Google Cloud OAuth client settings. The callback sent to Google is derived from the current request origin, so each Vercel preview, production, or custom domain you use for OAuth needs its own authorized redirect URI entry.
-
-### Fix `Error 403: access_denied` after choosing a Google account
-
-If Google shows `Error 403: access_denied` with request details such as `scope=https://www.googleapis.com/auth/webmasters.readonly`, the redirect URI is already reaching Google and the failure is usually in the Google Cloud OAuth app audience/consent configuration. Check these items in the same Google Cloud project that owns your `GOOGLE_CLIENT_ID`:
-
-1. Go to **Google Auth Platform > Audience** and confirm the app is either published for production, or still in testing with your exact Google email added under **Test users**.
-2. Go to **Google Auth Platform > Data Access** and make sure `https://www.googleapis.com/auth/webmasters.readonly` is configured as an OAuth scope for the app.
-3. If the account is a Google Workspace account, ask the Workspace administrator to allow this third-party app/scopes, or test with a personal Google account that is listed as a test user.
-4. After changing Google Cloud settings, wait a few minutes, reopen `/dashboard/integrations/google-search-console`, and click **Reconnect Google Search Console**.
-
-## Google Search Console integration
-
-- Start OAuth: `GET /api/google/connect`
-- OAuth callback: `GET /api/google/callback`
-- List properties: `GET /api/gsc/sites`
-- Query Search Analytics: `POST /api/gsc/search-analytics`
-- Dashboard page: `/dashboard/integrations/google-search-console`
-
-Search Analytics request body:
-
-```json
-{
-  "siteUrl": "https://example.com/",
-  "startDate": "2026-05-01",
-  "endDate": "2026-05-31",
-  "dimensions": ["date", "page"],
-  "rowLimit": 1000
-}
-```
-
-## Vercel Deployment
-
-This project is configured for the Next.js framework on Vercel.
-
-### Steps
-
-1. Import GitHub repo into Vercel.
-2. Framework preset: `Next.js`.
-3. Root Directory: repo root (where `package.json` exists).
-4. Add the required Google OAuth environment variables listed above.
-5. Deploy.
+Average position uses Google Search Console semantics: lower is better.
 
 ## CLI Generate
 
-The legacy Express/CLI reporting code remains available for local generation:
+The CLI remains available for CSV-based local generation:
 
 ```bash
 npm run generate -- --source looker --lookerCsvPath samples/gsc-looker-sample.csv --contentCsvPath samples/content-sample.csv
 ```
 
-Output file is written to `output/` in local environment.
+Output files are written to `output/` in local environments.
 
 ## Data Files
 
 - `samples/gsc-looker-sample.csv`
 - `samples/content-sample.csv`
+
+## Notes
+
+- This project remains an Express + Vercel serverless app for the SEO Reporter flow.
+- `api/index.js` continues to export the Express app for serverless usage.
+- `vercel.json` rewrites requests to the Express function, including `/`, `/auth/*`, and existing `/api/google/*` OAuth paths.
+- The legacy `/dashboard/integrations/google-search-console` path redirects to `/` so users land on the upgraded Express report builder.
+- No real API keys or secrets are stored in this repository.
