@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getGoogleEnv, getNormalizedGoogleEnvValue } from "../../../../src/lib/env";
 import { getRequestUserId } from "../../../../src/lib/auth/currentUser";
 import { upsertGoogleTokenForUser } from "../../../../src/lib/db/googleTokens";
-import { exchangeCodeForGoogleToken, getExpiryDate, isValidOAuthState } from "../../../../src/lib/google/oauth";
+import {
+  exchangeCodeForGoogleToken,
+  getExpiryDate,
+  getGoogleCallbackRedirectUri,
+  isValidOAuthState,
+} from "../../../../src/lib/google/oauth";
 
 export const runtime = "nodejs";
 
@@ -21,6 +26,20 @@ function getSafeAppUrl(fallbackOrigin: string): string {
   }
 }
 
+function getGoogleOAuthErrorMessage(errorCode: string, description: string | null): string {
+  if (errorCode === "access_denied") {
+    return [
+      "Google rejected the authorization request with access_denied.",
+      "If the OAuth app is still in Testing, add this Google account under Google Cloud Console > Google Auth Platform > Audience > Test users, or publish/verify the app for production access.",
+      description ? `Google details: ${description}` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  return description ? `Google OAuth error: ${errorCode}. ${description}` : `Google OAuth error: ${errorCode}.`;
+}
+
 function redirectToDashboard(request: NextRequest, status: "connected" | "error", message?: string): NextResponse {
   const fallbackOrigin = new URL(request.url).origin;
   const appUrl = getSafeAppUrl(fallbackOrigin);
@@ -37,11 +56,16 @@ function redirectToDashboard(request: NextRequest, status: "connected" | "error"
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const url = new URL(request.url);
+    const oauthError = url.searchParams.get("error");
+    const oauthErrorDescription = url.searchParams.get("error_description");
     const code = url.searchParams.get("code");
     const state = url.searchParams.get("state");
     const expectedState = request.cookies.get(OAUTH_STATE_COOKIE)?.value;
     const userId = getRequestUserId(request);
 
+    if (oauthError) {
+      throw new Error(getGoogleOAuthErrorMessage(oauthError, oauthErrorDescription));
+    }
     if (!code) {
       throw new Error("Missing Google authorization code.");
     }
@@ -52,8 +76,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       throw new Error("No authenticated app user was found for this OAuth callback.");
     }
 
-    const env = getGoogleEnv();
-    const token = await exchangeCodeForGoogleToken(code);
+    const redirectUri = getGoogleCallbackRedirectUri(request.url);
+    const env = getGoogleEnv({ redirectUri });
+    const token = await exchangeCodeForGoogleToken(code, redirectUri);
     if (!token.refresh_token) {
       throw new Error("Google did not return a refresh token. Reconnect with consent to grant offline access.");
     }
