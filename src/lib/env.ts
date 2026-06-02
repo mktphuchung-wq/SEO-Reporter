@@ -8,35 +8,16 @@ type GoogleEnv = {
   GOOGLE_GSC_SCOPE: string;
 };
 
-function stripMatchingQuotes(value: string): string {
-  let normalized = value.trim();
+function normalizeEnvValue(value: string): string {
+  const trimmed = value.trim();
+  const first = trimmed.at(0);
+  const last = trimmed.at(-1);
 
-  for (const [openingQuote, closingQuote] of [
-    ['"', '"'],
-    ["'", "'"],
-    ['\\"', '\\"'],
-    ["\\'", "\\'"],
-  ] as const) {
-    if (normalized.startsWith(openingQuote) && normalized.endsWith(closingQuote)) {
-      normalized = normalized.slice(openingQuote.length, -closingQuote.length).trim();
-      break;
-    }
+  if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+    return trimmed.slice(1, -1).trim();
   }
 
-  return normalized;
-}
-
-function normalizeEnvValue(name: keyof GoogleEnv, value: string): string {
-  let normalized = value.trim();
-  const assignmentPrefix = `${name}=`;
-
-  if (normalized.startsWith(assignmentPrefix)) {
-    normalized = normalized.slice(assignmentPrefix.length).trim();
-  }
-
-  normalized = stripMatchingQuotes(normalized);
-
-  return normalized;
+  return trimmed;
 }
 
 function requireEnv(name: keyof GoogleEnv): string {
@@ -44,7 +25,7 @@ function requireEnv(name: keyof GoogleEnv): string {
   if (!value || value.trim().length === 0) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
-  return normalizeEnvValue(name, value);
+  return normalizeEnvValue(value);
 }
 
 function assertValidUrl(name: keyof GoogleEnv, value: string): void {
