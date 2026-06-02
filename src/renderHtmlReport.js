@@ -71,6 +71,39 @@ function periodCardHtml(card) {
   </article>`;
 }
 
+
+function formatPosition(value) {
+  return value === null || value === undefined ? "—" : Number(value || 0).toFixed(2);
+}
+
+function deltaClass(value) {
+  const numeric = Number(value || 0);
+  return numeric > 0 ? "up" : numeric < 0 ? "down" : "flat";
+}
+
+function inverseDeltaClass(value) {
+  const numeric = Number(value || 0);
+  return numeric > 0 ? "down" : numeric < 0 ? "up" : "flat";
+}
+
+function linkedUrl(url) {
+  if (!url) {
+    return "—";
+  }
+  return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
+}
+
+function aiList(items) {
+  if (!items?.length) {
+    return '<p class="empty">No AI items</p>';
+  }
+  return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function priorityBadge(priority) {
+  return `<span class="priority priority-${escapeHtml(priority || "low")}">${escapeHtml(priority || "low")}</span>`;
+}
+
 function rowsToTable(items, mapper) {
   if (!items.length) {
     return '<p class="empty">No data</p>';
@@ -85,11 +118,18 @@ function rowsToTable(items, mapper) {
   </table>`;
 }
 
-export function renderHtmlReport({ insights, sourceInfo }) {
+export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} }) {
   const publishing = insights.thisMonthPublishing;
   const trend30 = insights.trending30Days;
   const sixMonths = insights.url6MonthInsights;
   const perf = insights.performance3Months;
+  const trackedKeywordMovements = keywordInsights.trackedKeywordMovements || [];
+  const highImpressionDrops = keywordInsights.highImpressionDrops || [];
+  const nearPageOneKeywords = keywordInsights.nearPageOneKeywords || [];
+  const keywordWinners = keywordInsights.keywordWinners || [];
+  const ctrOpportunities = keywordInsights.ctrOpportunities || [];
+  const geminiInsights = keywordInsights.geminiInsights || { available: false, message: "AI insight not requested." };
+  const filters = sourceInfo.filters || {};
 
   const chartPayload = {
     dailyLabels: perf.dailySeries.map((x) => x.date),
@@ -338,6 +378,28 @@ export function renderHtmlReport({ insights, sourceInfo }) {
       font-size: 1rem;
     }
 
+    .priority {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      background: rgba(106, 114, 128, 0.16);
+    }
+
+    .priority-high { background: rgba(179, 54, 54, 0.16); color: var(--down); }
+    .priority-medium { background: rgba(255, 123, 84, 0.2); color: #8a3f1d; }
+    .priority-low { background: rgba(31, 122, 31, 0.14); color: var(--up); }
+
+    .note-box {
+      border-left: 4px solid var(--accent);
+      padding: 10px 12px;
+      background: rgba(184, 216, 216, 0.28);
+      border-radius: 10px;
+      color: var(--muted);
+    }
+
     @media (max-width: 700px) {
       .wrapper { width: 94vw; }
       header, section { padding: 14px; }
@@ -353,6 +415,7 @@ export function renderHtmlReport({ insights, sourceInfo }) {
         <span>Generated: ${escapeHtml(insights.generatedAt)}</span>
         <span>Source: ${escapeHtml(sourceInfo.label)}</span>
         <span>Property: ${escapeHtml(sourceInfo.property)}</span>
+        <span>Date range: ${escapeHtml(sourceInfo.range ? `${sourceInfo.range.start} -> ${sourceInfo.range.end}` : "No date range")}</span>
         <span>Data span: ${escapeHtml(insights.dataSpan ? `${insights.dataSpan.start} -> ${insights.dataSpan.end}` : "No data")}</span>
       </div>
     </header>
@@ -360,6 +423,19 @@ export function renderHtmlReport({ insights, sourceInfo }) {
     <section>
       <h2>Summary Cards (Week / Month / 3M / 6M)</h2>
       <div class="cards">${insights.periodCards.map((card) => periodCardHtml(card)).join("\n")}</div>
+    </section>
+
+    <section>
+      <h2>Active Filters</h2>
+      <div class="kpis">
+        <div class="kpi"><span>Property</span><strong>${escapeHtml(sourceInfo.property || "—")}</strong></div>
+        <div class="kpi"><span>Search type</span><strong>${escapeHtml(filters.searchType || "web")}</strong></div>
+        <div class="kpi"><span>Date range</span><strong>${escapeHtml(sourceInfo.range ? `${sourceInfo.range.start} -> ${sourceInfo.range.end}` : "—")}</strong></div>
+        <div class="kpi"><span>Report period</span><strong>${escapeHtml(filters.reportPeriodLabel || filters.reportPeriod || "custom")}</strong></div>
+        <div class="kpi"><span>Page contains filter</span><strong>${escapeHtml(filters.pageContains || "None")}</strong></div>
+        <div class="kpi"><span>Tracked keyword count</span><strong>${formatNumber(filters.trackedKeywordCount || 0)}</strong></div>
+      </div>
+      <p class="note-box" style="margin-top:10px;">For average position, lower is better.</p>
     </section>
 
     <section>
@@ -407,6 +483,66 @@ export function renderHtmlReport({ insights, sourceInfo }) {
         </div>
       </div>
       <p class="muted" style="margin-top:8px;">Window compare: ${trend30.currentRange.start} -> ${trend30.currentRange.end} vs ${trend30.previousRange.start} -> ${trend30.previousRange.end}</p>
+    </section>
+
+    <section>
+      <h2>Tracked Keyword Ranking Movement</h2>
+      ${rowsToTable(trackedKeywordMovements, {
+        header: "<tr><th>Keyword</th><th>Match type</th><th>Best URL</th><th>Current position</th><th>Previous position</th><th>Position change</th><th>Current clicks</th><th>Click change</th><th>Current impressions</th><th>Impression change</th><th>Action hint</th></tr>",
+        row: (item) => `<tr><td>${escapeHtml(item.keyword)}</td><td>${escapeHtml(item.matchType)}</td><td class="url">${linkedUrl(item.bestCurrentUrl)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatPosition(item.previousAvgPosition)}</td><td class="${deltaClass(item.positionDelta)}">${item.positionDelta === null ? "—" : formatSigned(item.positionDelta, 2)}</td><td>${formatNumber(item.currentClicks)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td>${formatNumber(item.currentImpressions)}</td><td class="${deltaClass(item.impressionDelta)}">${formatSigned(item.impressionDelta)}</td><td>${escapeHtml(item.actionHint)}</td></tr>`,
+      })}
+    </section>
+
+    <section>
+      <h2>High Impression Keywords With Ranking Drop</h2>
+      ${rowsToTable(highImpressionDrops, {
+        header: "<tr><th>Query</th><th>URL</th><th>Current position</th><th>Previous position</th><th>Position loss</th><th>Current impressions</th><th>Current clicks</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
+        row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatPosition(item.previousAvgPosition)}</td><td class="down">${formatSigned(Math.abs(item.positionDelta || 0), 2)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatPct(item.currentCtr)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
+      })}
+    </section>
+
+    <section>
+      <h2>High Impression Keywords Near Page 1</h2>
+      ${rowsToTable(nearPageOneKeywords, {
+        header: "<tr><th>Query</th><th>URL</th><th>Position</th><th>Impressions</th><th>Clicks</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
+        row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatPct(item.currentCtr)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
+      })}
+    </section>
+
+    <section>
+      <h2>CTR Opportunity Keywords</h2>
+      ${rowsToTable(ctrOpportunities, {
+        header: "<tr><th>Query</th><th>URL</th><th>Position</th><th>Impressions</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
+        row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatPct(item.currentCtr)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
+      })}
+    </section>
+
+    <section>
+      <h2>Keyword Winners</h2>
+      ${rowsToTable(keywordWinners, {
+        header: "<tr><th>Query</th><th>URL</th><th>Current position</th><th>Position gain</th><th>Click change</th><th>Impression change</th><th>Priority</th><th>Recommendation</th></tr>",
+        row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td class="up">${item.positionDelta === null ? "—" : formatSigned(item.positionDelta, 2)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td class="${deltaClass(item.impressionDelta)}">${formatSigned(item.impressionDelta)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
+      })}
+    </section>
+
+    <section>
+      <h2>Gemini AI SEO Insights</h2>
+      ${geminiInsights.available ? `
+        <div class="two-col">
+          <div><h3>Executive Summary</h3>${aiList(geminiInsights.executiveSummary)}</div>
+          <div><h3>Key Risks</h3>${aiList(geminiInsights.risks)}</div>
+          <div><h3>Opportunities</h3>${aiList(geminiInsights.opportunities)}</div>
+          <div><h3>Content Refresh Ideas</h3>${rowsToTable(geminiInsights.contentRefreshIdeas || [], {
+            header: "<tr><th>URL</th><th>Reason</th><th>Suggested update</th></tr>",
+            row: (item) => `<tr><td class="url">${linkedUrl(item.url)}</td><td>${escapeHtml(item.reason)}</td><td>${escapeHtml(item.suggestedUpdate)}</td></tr>`,
+          })}</div>
+        </div>
+        <h3 style="margin-top:12px;">Recommended Actions</h3>
+        ${rowsToTable(geminiInsights.recommendedActions || [], {
+          header: "<tr><th>Priority</th><th>Title</th><th>Why</th><th>Action</th><th>Expected impact</th></tr>",
+          row: (item) => `<tr><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.why)}</td><td>${escapeHtml(item.action)}</td><td>${escapeHtml(item.expectedImpact)}</td></tr>`,
+        })}
+      ` : `<p class="empty">${escapeHtml(geminiInsights.message || "AI insight unavailable.")}</p>`}
     </section>
 
     <section>
