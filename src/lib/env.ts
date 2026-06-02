@@ -8,12 +8,75 @@ type GoogleEnv = {
   GOOGLE_GSC_SCOPE: string;
 };
 
-function requireEnv(name: keyof GoogleEnv): string {
+const URL_ENV_NAMES: Array<keyof GoogleEnv> = ["NEXT_PUBLIC_APP_URL", "GOOGLE_REDIRECT_URI"];
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripMatchingQuotes(value: string): string {
+  let normalized = value.trim();
+
+  for (const [openingQuote, closingQuote] of [
+    ['"', '"'],
+    ["'", "'"],
+    ["`", "`"],
+    ['\\"', '\\"'],
+    ["\\'", "\\'"],
+    ["\\`", "\\`"],
+  ] as const) {
+    if (normalized.startsWith(openingQuote) && normalized.endsWith(closingQuote)) {
+      normalized = normalized.slice(openingQuote.length, -closingQuote.length).trim();
+      break;
+    }
+  }
+
+  return normalized;
+}
+
+function stripEnvAssignment(name: keyof GoogleEnv, value: string): string {
+  const assignmentPattern = new RegExp(`^(?:export\\s+)?${escapeRegExp(name)}\\s*=\\s*`);
+  return value.replace(assignmentPattern, "").trim();
+}
+
+function extractUrlValue(name: keyof GoogleEnv, value: string): string {
+  if (!URL_ENV_NAMES.includes(name)) {
+    return value;
+  }
+
+  const urlMatch = value.match(/https?:\/\/[^\s"'`\\<>),;]+/);
+  return urlMatch?.[0] ?? value;
+}
+
+function normalizeEnvValue(name: keyof GoogleEnv, value: string): string {
+  let normalized = value.trim();
+
+  for (let index = 0; index < 3; index += 1) {
+    normalized = stripMatchingQuotes(normalized);
+    normalized = stripEnvAssignment(name, normalized);
+  }
+
+  normalized = stripMatchingQuotes(normalized);
+  normalized = extractUrlValue(name, normalized);
+
+  return normalized;
+}
+
+export function getNormalizedGoogleEnvValue(name: keyof GoogleEnv): string | null {
   const value = process.env[name];
   if (!value || value.trim().length === 0) {
+    return null;
+  }
+
+  return normalizeEnvValue(name, value);
+}
+
+function requireEnv(name: keyof GoogleEnv): string {
+  const value = getNormalizedGoogleEnvValue(name);
+  if (!value) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
-  return value.trim();
+  return value;
 }
 
 function assertValidUrl(name: keyof GoogleEnv, value: string): void {
@@ -21,7 +84,7 @@ function assertValidUrl(name: keyof GoogleEnv, value: string): void {
   try {
     url = new URL(value);
   } catch {
-    throw new Error(`${name} must be a valid URL.`);
+    throw new Error(`${name} must be a valid URL. Current normalized value: ${JSON.stringify(value)}.`);
   }
 
   if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
