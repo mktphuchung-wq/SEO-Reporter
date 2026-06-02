@@ -123,9 +123,17 @@ function getAppUrl(redirectUri: URL): string {
   return redirectUri.origin;
 }
 
-export function getGoogleEnv(): GoogleEnv {
-  const redirectUri = requireEnv("GOOGLE_REDIRECT_URI");
-  const validatedRedirectUri = assertValidUrl("GOOGLE_REDIRECT_URI", redirectUri);
+type GoogleEnvOptions = {
+  redirectUri?: string;
+};
+
+function getValidatedRedirectUri(redirectUri?: string): URL {
+  const value = redirectUri || requireEnv("GOOGLE_REDIRECT_URI");
+  return assertValidUrl("GOOGLE_REDIRECT_URI", value);
+}
+
+export function getGoogleEnv(options: GoogleEnvOptions = {}): GoogleEnv {
+  const validatedRedirectUri = getValidatedRedirectUri(options.redirectUri);
 
   const env = {
     NEXT_PUBLIC_APP_URL: getAppUrl(validatedRedirectUri),

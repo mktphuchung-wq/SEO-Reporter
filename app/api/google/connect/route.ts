@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureRequestUserId } from "../../../../src/lib/auth/currentUser";
-import { buildGoogleOAuthUrl, generateOAuthState } from "../../../../src/lib/google/oauth";
+import { buildGoogleOAuthUrl, generateOAuthState, getGoogleCallbackRedirectUri } from "../../../../src/lib/google/oauth";
 
 export const runtime = "nodejs";
 
@@ -10,7 +10,8 @@ const STATE_MAX_AGE_SECONDS = 10 * 60;
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const state = generateOAuthState();
-    const authUrl = buildGoogleOAuthUrl(state);
+    const redirectUri = getGoogleCallbackRedirectUri(request.url);
+    const authUrl = buildGoogleOAuthUrl(state, redirectUri);
     const response = NextResponse.redirect(authUrl);
 
     ensureRequestUserId(request, response);

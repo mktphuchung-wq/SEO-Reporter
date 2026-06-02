@@ -28,11 +28,11 @@ Required environment variables:
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
-GOOGLE_REDIRECT_URI=http://localhost:3000/api/google/callback
+GOOGLE_REDIRECT_URI=http://localhost:3000/api/google/callback # optional fallback outside OAuth route handlers
 GOOGLE_GSC_SCOPE=https://www.googleapis.com/auth/webmasters.readonly
 ```
 
-`NEXT_PUBLIC_APP_URL` is used only as the post-OAuth redirect origin. If it is missing or accidentally pasted with extra text, the app falls back to the origin from `GOOGLE_REDIRECT_URI` instead of blocking OAuth startup. The `npm warn deprecated node-domexception@1.0.0` message is emitted by a transitive dependency during install and is not the cause of the app URL validation error.
+`NEXT_PUBLIC_APP_URL` is used only as the post-OAuth redirect origin. During the OAuth browser flow, the app now sends Google a callback URL based on the domain that received `/api/google/connect` (for example `https://your-domain.vercel.app/api/google/callback`) so Vercel production/custom domains do not accidentally use a stale preview-domain redirect URI. `GOOGLE_REDIRECT_URI` remains useful as a fallback for server-side helpers, but the active callback URL still must be added exactly in Google Cloud Console. If an environment value is accidentally pasted with extra text, the app normalizes the URL before using it. The `npm warn deprecated node-domexception@1.0.0` message is emitted by a transitive dependency during install and is not the cause of the app URL validation error.
 
 Optional local token database path:
 
@@ -59,7 +59,16 @@ and add this exact redirect URI in Google Cloud OAuth client settings:
 
 `https://seo-reporter-git-main-hung-s-projects17xx.vercel.app/api/google/callback`
 
-If you later promote a different production domain, update both Vercel environment variables and the authorized redirect URI in Google Cloud to use that exact domain.
+If you later promote a different production domain, add the exact new callback URI in Google Cloud OAuth client settings. The callback sent to Google is derived from the current request origin, so each Vercel preview, production, or custom domain you use for OAuth needs its own authorized redirect URI entry.
+
+### Fix `Error 403: access_denied` after choosing a Google account
+
+If Google shows `Error 403: access_denied` with request details such as `scope=https://www.googleapis.com/auth/webmasters.readonly`, the redirect URI is already reaching Google and the failure is usually in the Google Cloud OAuth app audience/consent configuration. Check these items in the same Google Cloud project that owns your `GOOGLE_CLIENT_ID`:
+
+1. Go to **Google Auth Platform > Audience** and confirm the app is either published for production, or still in testing with your exact Google email added under **Test users**.
+2. Go to **Google Auth Platform > Data Access** and make sure `https://www.googleapis.com/auth/webmasters.readonly` is configured as an OAuth scope for the app.
+3. If the account is a Google Workspace account, ask the Workspace administrator to allow this third-party app/scopes, or test with a personal Google account that is listed as a test user.
+4. After changing Google Cloud settings, wait a few minutes, reopen `/dashboard/integrations/google-search-console`, and click **Reconnect Google Search Console**.
 
 ## Google Search Console integration
 

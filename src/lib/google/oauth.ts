@@ -23,8 +23,13 @@ export function isValidOAuthState(receivedState: string | null, expectedState: s
   return received.length === expected.length && crypto.timingSafeEqual(received, expected);
 }
 
-export function buildGoogleOAuthUrl(state: string): string {
-  const env = getGoogleEnv();
+export function getGoogleCallbackRedirectUri(requestUrl: string): string {
+  const url = new URL(requestUrl);
+  return new URL("/api/google/callback", url.origin).toString();
+}
+
+export function buildGoogleOAuthUrl(state: string, redirectUri?: string): string {
+  const env = getGoogleEnv({ redirectUri });
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.searchParams.set("client_id", env.GOOGLE_CLIENT_ID);
   url.searchParams.set("redirect_uri", env.GOOGLE_REDIRECT_URI);
@@ -36,8 +41,8 @@ export function buildGoogleOAuthUrl(state: string): string {
   return url.toString();
 }
 
-export async function exchangeCodeForGoogleToken(code: string): Promise<GoogleTokenResponse> {
-  const env = getGoogleEnv();
+export async function exchangeCodeForGoogleToken(code: string, redirectUri?: string): Promise<GoogleTokenResponse> {
+  const env = getGoogleEnv({ redirectUri });
   const body = new URLSearchParams({
     code,
     client_id: env.GOOGLE_CLIENT_ID,
