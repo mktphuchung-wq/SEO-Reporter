@@ -132,6 +132,7 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} })
   const nearPageOneKeywords = keywordInsights.nearPageOneKeywords || [];
   const keywordWinners = keywordInsights.keywordWinners || [];
   const ctrOpportunities = keywordInsights.ctrOpportunities || [];
+  const seoAlerts = keywordInsights.seoAlerts || [];
   const geminiInsights = keywordInsights.geminiInsights || { available: false, message: "AI insight not requested." };
   const filters = sourceInfo.filters || {};
   const diagnostics = sourceInfo.diagnostics || {};
@@ -439,6 +440,8 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} })
         <div class="kpi"><span>Report period</span><strong>${escapeHtml(filters.reportPeriodLabel || filters.reportPeriod || "custom")}</strong></div>
         <div class="kpi"><span>Page contains filter</span><strong>${escapeHtml(filters.pageContains || "None")}</strong></div>
         <div class="kpi"><span>Tracked keyword count</span><strong>${formatNumber(filters.trackedKeywordCount || 0)}</strong></div>
+        <div class="kpi"><span>SEO alert count</span><strong>${formatNumber(filters.seoAlertCount || seoAlerts.length || 0)}</strong></div>
+        <div class="kpi"><span>High-severity alerts</span><strong>${formatNumber(filters.highSeveritySeoAlertCount || seoAlerts.filter((alert) => alert.severity === "high").length || 0)}</strong></div>
       </div>
       <p class="note-box" style="margin-top:10px;">For average position, lower is better.</p>
     </section>
@@ -502,6 +505,15 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} })
         </div>
       </div>
       <p class="muted" style="margin-top:8px;">Window compare: ${trend30.currentRange.start} -> ${trend30.currentRange.end} vs ${trend30.previousRange.start} -> ${trend30.previousRange.end}</p>
+    </section>
+
+    <section>
+      <h2>SEO Alerts</h2>
+      <p class="muted">Alerts are generated from high-impression ranking drops, tracked keyword losses, and CTR opportunities. Notification summaries are sent only for high-severity alerts when alerts are enabled.</p>
+      ${rowsToTable(seoAlerts, {
+        header: "<tr><th>Severity</th><th>Type</th><th>Title</th><th>Message</th><th>URL</th><th>Recommendation</th></tr>",
+        row: (item) => `<tr><td>${priorityBadge(item.severity)}</td><td>${escapeHtml(item.type)}</td><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.message)}</td><td class="url">${linkedUrl(item.url)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
+      })}
     </section>
 
     <section>

@@ -7,6 +7,7 @@ import session from "express-session";
 import { google } from "googleapis";
 import { buildSeoInsights } from "./analytics.js";
 import { generateGeminiSeoInsights } from "./ai/geminiInsights.js";
+import { buildSeoAlerts, getSeoAlertConfig, hasHighSeverityAlerts, sendSeoAlertSummary } from "./alerts/seoAlerts.js";
 import { loadReportData } from "./dataLoader.js";
 import { renderHtmlReport } from "./renderHtmlReport.js";
 import { filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
@@ -316,6 +317,10 @@ function checked(value) {
   return value ? "checked" : "";
 }
 
+function isEnvEnabled(value) {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
 function countDaysInclusive(startDate, endDate) {
   const start = parseDate(startDate);
   const end = parseDate(endDate);
@@ -349,6 +354,8 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
   const pageContains = defaultValues.pageContains || "";
   const trackedKeywords = defaultValues.trackedKeywords || "";
   const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
+  const seoAlertsConfigured = Boolean(process.env.SLACK_WEBHOOK_URL || (process.env.ALERT_EMAIL_PROVIDER_URL && process.env.ALERT_EMAIL_TO));
+  const seoAlertsDefaultEnabled = defaultValues.enableSeoAlerts ?? isEnvEnabled(process.env.SEO_ALERTS_ENABLED);
   const propertyStatusMessage = googleApiError
     ? `Search Console API error: ${googleApiError.message}`
     : authenticated && sites.length === 0
@@ -546,6 +553,11 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
             <div class="note"><input type="checkbox" name="enableAiInsights" value="1" style="width:auto;" ${checked(defaultValues.enableAiInsights)} /> Generate Gemini AI SEO insights when configured</div>
             <div class="note">Gemini status: <strong>${geminiConfigured ? "configured" : "missing GEMINI_API_KEY"}</strong></div>
           </div>
+          <div>
+            <label>SEO Alerts</label>
+            <div class="note"><input type="checkbox" name="enableSeoAlerts" value="1" style="width:auto;" ${checked(seoAlertsDefaultEnabled)} /> Send a summary only when high-severity alerts are detected</div>
+            <div class="note">Alert destination: <strong>${seoAlertsConfigured ? "configured" : "missing Slack webhook or email provider"}</strong></div>
+          </div>
         </div>
         <div class="actions">
           <button type="submit" id="generateButton" class="btn btn-primary" ${authenticated || defaultValues.sourceType === "looker" ? "" : "disabled"}>Generate HTML Report</button>
@@ -690,6 +702,7 @@ app.get("/", async (req, res) => {
         pageContains: req.session.pageContains,
         trackedKeywords: req.session.trackedKeywords,
         searchType: req.session.searchType,
+        enableSeoAlerts: req.session.enableSeoAlerts,
       },
     }),
   );
@@ -715,12 +728,14 @@ app.post("/generate", async (req, res) => {
     const pageContains = String(req.body.pageContains || "").trim();
     const trackedKeywordsInput = req.body.trackedKeywords || "";
     const enableAiInsights = Boolean(req.body.enableAiInsights);
+    const enableSeoAlerts = Boolean(req.body.enableSeoAlerts) || isEnvEnabled(process.env.SEO_ALERTS_ENABLED);
 
     req.session.selectedSiteUrl = req.body.siteUrl || req.session.selectedSiteUrl;
     req.session.reportPeriod = reportPeriod;
     req.session.pageContains = pageContains;
     req.session.trackedKeywords = trackedKeywordsInput;
     req.session.searchType = req.body.searchType || "web";
+    req.session.enableSeoAlerts = enableSeoAlerts;
 
     const input = {
       sourceType,
@@ -753,6 +768,18 @@ app.post("/generate", async (req, res) => {
     const nearPageOneKeywords = buildNearPageOneKeywords({ keywordRows, currentRange });
     const keywordWinners = buildKeywordWinners({ keywordRows, currentRange, previousRange });
     const ctrOpportunities = buildCtrOpportunities({ keywordRows, currentRange });
+    const seoAlerts = buildSeoAlerts({ highImpressionDrops, trackedKeywordMovements, ctrOpportunities });
+    if (enableSeoAlerts && hasHighSeverityAlerts(seoAlerts)) {
+      try {
+        await sendSeoAlertSummary({
+          alerts: seoAlerts,
+          sourceInfo,
+          config: getSeoAlertConfig(),
+        });
+      } catch (error) {
+        console.warn("Failed to send SEO alert summary.", error instanceof Error ? error.message : error);
+      }
+    }
     const geminiInsights = enableAiInsights
       ? await generateGeminiSeoInsights({
           sourceInfo,
@@ -777,6 +804,8 @@ app.post("/generate", async (req, res) => {
           pageContains,
           searchType: input.searchType || "web",
           trackedKeywordCount: trackedKeywords.length,
+          seoAlertCount: seoAlerts.length,
+          highSeveritySeoAlertCount: seoAlerts.filter((alert) => alert.severity === "high").length,
         },
       },
       keywordInsights: {
@@ -789,6 +818,7 @@ app.post("/generate", async (req, res) => {
         currentRange,
         previousRange,
         geminiInsights,
+        seoAlerts,
       },
     });
 
