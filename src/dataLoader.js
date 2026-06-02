@@ -95,16 +95,45 @@ export function resolveRange({ startDate, endDate, reportPeriod, defaultEndDate 
   return clampDateRangeByDays(safeDefaultEndDate, 180);
 }
 
-
 const GSC_DATA_DELAY_DAYS = Number.parseInt(process.env.GSC_DATA_DELAY_DAYS || "2", 10);
 
+function getGscDataDelayDays() {
+  return Number.isFinite(GSC_DATA_DELAY_DAYS) && GSC_DATA_DELAY_DAYS >= 0 ? GSC_DATA_DELAY_DAYS : 2;
+}
+
 function getGscDefaultEndDate() {
-  const safeDelayDays = Number.isFinite(GSC_DATA_DELAY_DAYS) && GSC_DATA_DELAY_DAYS >= 0 ? GSC_DATA_DELAY_DAYS : 2;
-  return dayjs().subtract(safeDelayDays, "day").format("YYYY-MM-DD");
+  return dayjs().subtract(getGscDataDelayDays(), "day").format("YYYY-MM-DD");
+}
+
+export function resolveGscRange({ startDate, endDate, reportPeriod } = {}) {
+  return resolveRange({
+    startDate,
+    endDate,
+    reportPeriod,
+    defaultEndDate: getGscDefaultEndDate(),
+  });
+}
+
+function buildGscDataDelayNote(range) {
+  return range?.end ? `GSC data may be delayed; report ends at ${range.end}.` : null;
 }
 
 function isFileNotFoundError(error) {
   return error?.code === "ENOENT" || /no such file or directory/i.test(error?.message || "");
+}
+
+async function loadLookerRowsOrThrow(lookerCsvPath) {
+  const absoluteLookerPath = path.resolve(lookerCsvPath);
+
+  try {
+    return await loadLookerCsvRows(absoluteLookerPath);
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      throw new Error(`Looker CSV not found at ${absoluteLookerPath}.`);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse Looker CSV at ${absoluteLookerPath}: ${message}`);
+  }
 }
 
 async function loadOptionalContentRows(contentCsvPath, { optional = false } = {}) {
@@ -174,7 +203,7 @@ export async function loadReportData({
       throw new Error("siteUrl is required when sourceType = gsc");
     }
 
-    const range = resolveRange({ startDate, endDate, reportPeriod, defaultEndDate: getGscDefaultEndDate() });
+    const range = resolveGscRange({ startDate, endDate, reportPeriod });
 
     const comparisonRange = previousRangeFor(range);
     const keywordFetchRange = {
@@ -207,6 +236,7 @@ export async function loadReportData({
       property: siteUrl,
       range,
       keywordRange: keywordFetchRange,
+      dataDelayNote: buildGscDataDelayNote(range),
       filters: {
         reportPeriod: reportPeriod || "custom",
         pageContains: trimmedPageContains,
@@ -215,9 +245,11 @@ export async function loadReportData({
       diagnostics: {
         pageRowCount: rows.length,
         keywordRowCount: keywordRows.length,
+        pageContainsApplied: Boolean(trimmedPageContains),
+        searchType: normalizedSearchType,
         queryRange: range,
         keywordFetchRange,
-        gscDataDelayDays: Number.isFinite(GSC_DATA_DELAY_DAYS) ? GSC_DATA_DELAY_DAYS : 2,
+        gscDataDelayDays: getGscDataDelayDays(),
       },
     };
   } else {
@@ -226,7 +258,7 @@ export async function loadReportData({
     }
 
     const absoluteLookerPath = path.resolve(lookerCsvPath);
-    rows = await loadLookerCsvRows(absoluteLookerPath);
+    rows = await loadLookerRowsOrThrow(absoluteLookerPath);
     const span = findDateSpan(rows);
 
     if (startDate || endDate) {
@@ -259,17 +291,23 @@ export async function loadReportData({
   const contentResult = await loadOptionalContentRows(contentCsvPath, { optional: normalizedType === "gsc" });
   const contentRows = contentResult.rows;
   const coalesced = coalesceRows(rows);
+  const isEmptyGscReport = normalizedType === "gsc" && coalesced.length === 0;
+  const emptyReason = isEmptyGscReport
+    ? "No GSC page rows matched this property, search type, date range, and page filter."
+    : null;
+
   sourceInfo = {
     ...sourceInfo,
+    emptyReason,
     diagnostics: {
       ...(sourceInfo?.diagnostics || {}),
       coalescedPageRowCount: coalesced.length,
       contentMetadataRowCount: contentRows.length,
       contentMetadataWarning: contentResult.warning,
-      emptyDataWarning:
-        normalizedType === "gsc" && !coalesced.length
-          ? "No GSC page rows matched this property, search type, date range, and page filter. Try a wider range or remove the page filter."
-          : null,
+      emptyReason,
+      emptyDataWarning: emptyReason
+        ? `${emptyReason} Try a wider range or remove the page filter.`
+        : null,
     },
   };
 
@@ -282,5 +320,6 @@ export async function loadReportData({
     keywordRows,
     contentRows,
     sourceInfo,
+    emptyReason,
   };
 }

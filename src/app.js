@@ -332,6 +332,45 @@ function findSitePermission(sites, siteUrl) {
   return sites.find((site) => site.siteUrl === siteUrl)?.permissionLevel || "";
 }
 
+
+function isEmptyDataError(error) {
+  return error?.code === "EMPTY_GSC_DATA";
+}
+
+function createEmptyGscDataError({ sourceInfo, input }) {
+  const range = sourceInfo?.range || { start: input.startDate || "—", end: input.endDate || "—" };
+  const filters = sourceInfo?.filters || {};
+  const diagnostics = sourceInfo?.diagnostics || {};
+  const error = new Error("No GSC data rows matched the selected filters.");
+  error.code = "EMPTY_GSC_DATA";
+  error.emptyDataContext = {
+    property: sourceInfo?.property || input.siteUrl || "—",
+    range,
+    searchType: diagnostics.searchType || filters.searchType || input.searchType || "web",
+    pageContains: filters.pageContains || input.pageContains || "",
+    pageContainsApplied: Boolean(diagnostics.pageContainsApplied),
+    pageRowCount: diagnostics.pageRowCount || 0,
+    keywordRowCount: diagnostics.keywordRowCount || 0,
+  };
+  return error;
+}
+
+function buildEmptyDataWarning(error, fallbackInput = {}) {
+  const context = error?.emptyDataContext || {};
+  const range = context.range || {};
+  const pageContains = context.pageContains || fallbackInput.pageContains || "";
+
+  return [
+    "No GSC data matched the selected filters.",
+    `Property: ${context.property || fallbackInput.siteUrl || "—"}`,
+    `Range: ${range.start || fallbackInput.startDate || "—"} -> ${range.end || fallbackInput.endDate || "—"}`,
+    `Search type: ${context.searchType || fallbackInput.searchType || "web"}`,
+    `Page contains: ${pageContains || "None"}`,
+    `Rows returned: page=${context.pageRowCount ?? 0}, keyword=${context.keywordRowCount ?? 0}`,
+    "Next steps: confirm the selected GSC property has data for this period; try search type 'web'; widen the report period/custom date range; remove or loosen the Page contains filter; then generate the report again.",
+  ].join("\n");
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -950,6 +989,10 @@ app.post("/generate", async (req, res) => {
     };
 
     const { rows, keywordRows, contentRows, sourceInfo } = await loadReportData(input);
+    if (sourceType === "gsc" && rows.length === 0) {
+      throw createEmptyGscDataError({ sourceInfo, input });
+    }
+
     const insights = buildSeoInsights({
       rows,
       contentRows,
@@ -966,18 +1009,20 @@ app.post("/generate", async (req, res) => {
     const nearPageOneKeywords = buildNearPageOneKeywords({ keywordRows, currentRange });
     const keywordWinners = buildKeywordWinners({ keywordRows, currentRange, previousRange });
     const ctrOpportunities = buildCtrOpportunities({ keywordRows, currentRange });
-    const geminiInsights = enableAiInsights
-      ? await generateGeminiSeoInsights({
-          sourceInfo,
-          periodCards: insights.periodCards,
-          trackedKeywordMovements,
-          highImpressionDrops,
-          nearPageOneKeywords,
-          keywordWinners,
-          ctrOpportunities,
-          url6MonthInsights: insights.url6MonthInsights,
-        })
-      : { available: false, message: "AI insight not requested." };
+    const geminiInsights = isEmptyReport
+      ? { available: false, message: "AI insight skipped because the selected GSC filters returned no page rows." }
+      : enableAiInsights
+        ? await generateGeminiSeoInsights({
+            sourceInfo,
+            periodCards: insights.periodCards,
+            trackedKeywordMovements,
+            highImpressionDrops,
+            nearPageOneKeywords,
+            keywordWinners,
+            ctrOpportunities,
+            url6MonthInsights: insights.url6MonthInsights,
+          })
+        : { available: false, message: "AI insight not requested." };
 
     const reportHtml = renderHtmlReport({
       insights,
@@ -990,6 +1035,11 @@ app.post("/generate", async (req, res) => {
           pageContains,
           searchType: input.searchType || "web",
           trackedKeywordCount: trackedKeywords.length,
+        },
+        diagnostics: {
+          ...(sourceInfo.diagnostics || {}),
+          pageRowCount: sourceInfo.diagnostics?.pageRowCount ?? rows.length,
+          keywordRowCount: sourceInfo.diagnostics?.keywordRowCount ?? keywordRows.length,
         },
       },
       keywordInsights: {
@@ -1016,13 +1066,15 @@ app.post("/generate", async (req, res) => {
     res.type("html").send(reportHtml);
   } catch (error) {
     const sites = await loadSitesForSession(req).catch(() => []);
+    const emptyData = isEmptyDataError(error);
     res.status(400).type("html").send(
       renderHomePage({
         sites,
         authenticated: Boolean(getGoogleTokens(req)),
         presets: await listPresets().catch(() => []),
         defaultValues: req.body,
-        error: error instanceof Error ? error.message : "Report generation failed.",
+        error: emptyData ? "" : error instanceof Error ? error.message : "Report generation failed.",
+        warning: emptyData ? buildEmptyDataWarning(error, req.body) : "",
       }),
     );
   }
