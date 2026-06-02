@@ -329,6 +329,45 @@ function findSitePermission(sites, siteUrl) {
   return sites.find((site) => site.siteUrl === siteUrl)?.permissionLevel || "";
 }
 
+
+function isEmptyDataError(error) {
+  return error?.code === "EMPTY_GSC_DATA";
+}
+
+function createEmptyGscDataError({ sourceInfo, input }) {
+  const range = sourceInfo?.range || { start: input.startDate || "—", end: input.endDate || "—" };
+  const filters = sourceInfo?.filters || {};
+  const diagnostics = sourceInfo?.diagnostics || {};
+  const error = new Error("No GSC data rows matched the selected filters.");
+  error.code = "EMPTY_GSC_DATA";
+  error.emptyDataContext = {
+    property: sourceInfo?.property || input.siteUrl || "—",
+    range,
+    searchType: diagnostics.searchType || filters.searchType || input.searchType || "web",
+    pageContains: filters.pageContains || input.pageContains || "",
+    pageContainsApplied: Boolean(diagnostics.pageContainsApplied),
+    pageRowCount: diagnostics.pageRowCount || 0,
+    keywordRowCount: diagnostics.keywordRowCount || 0,
+  };
+  return error;
+}
+
+function buildEmptyDataWarning(error, fallbackInput = {}) {
+  const context = error?.emptyDataContext || {};
+  const range = context.range || {};
+  const pageContains = context.pageContains || fallbackInput.pageContains || "";
+
+  return [
+    "No GSC data matched the selected filters.",
+    `Property: ${context.property || fallbackInput.siteUrl || "—"}`,
+    `Range: ${range.start || fallbackInput.startDate || "—"} -> ${range.end || fallbackInput.endDate || "—"}`,
+    `Search type: ${context.searchType || fallbackInput.searchType || "web"}`,
+    `Page contains: ${pageContains || "None"}`,
+    `Rows returned: page=${context.pageRowCount ?? 0}, keyword=${context.keywordRowCount ?? 0}`,
+    "Next steps: confirm the selected GSC property has data for this period; try search type 'web'; widen the report period/custom date range; remove or loosen the Page contains filter; then generate the report again.",
+  ].join("\n");
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -338,7 +377,7 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function renderHomePage({ sites = [], authenticated = false, defaultValues = {}, error = "", googleApiError = null } = {}) {
+function renderHomePage({ sites = [], authenticated = false, defaultValues = {}, error = "", warning = "", googleApiError = null } = {}) {
   const sourceType = defaultValues.sourceType || "gsc";
   const lookerPath = defaultValues.lookerCsvPath || (sourceType === "looker" ? "samples/gsc-looker-sample.csv" : "");
   const contentPath = defaultValues.contentCsvPath || (sourceType === "looker" ? "samples/content-sample.csv" : "");
@@ -448,7 +487,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
       padding: 10px;
       margin-bottom: 12px;
     }
-    .warning { margin-top: 10px; margin-bottom: 0; }
+    .warning { margin-top: 10px; margin-bottom: 0; white-space: pre-line; }
     .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 14px 0; }
     .info-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: rgba(44, 110, 73, 0.06); }
     .info-card strong { display: block; margin-bottom: 6px; }
@@ -462,6 +501,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
       <h1>SEO Report Builder</h1>
       <p>Authenticate Google first, then select an authorized Search Console property.</p>
       ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
+      ${warning ? `<div class="warning">${escapeHtml(warning)}</div>` : ""}
       <div class="actions">
         ${authenticated ? '<a class="btn btn-ghost" href="/auth/logout">Logout Google</a>' : '<a class="btn btn-primary" href="/auth/google">Authenticate Google</a>'}
       </div>
@@ -737,6 +777,10 @@ app.post("/generate", async (req, res) => {
     };
 
     const { rows, keywordRows, contentRows, sourceInfo } = await loadReportData(input);
+    if (sourceType === "gsc" && rows.length === 0) {
+      throw createEmptyGscDataError({ sourceInfo, input });
+    }
+
     const insights = buildSeoInsights({
       rows,
       contentRows,
@@ -803,12 +847,14 @@ app.post("/generate", async (req, res) => {
     res.type("html").send(reportHtml);
   } catch (error) {
     const sites = await loadSitesForSession(req).catch(() => []);
+    const emptyData = isEmptyDataError(error);
     res.status(400).type("html").send(
       renderHomePage({
         sites,
         authenticated: Boolean(getGoogleTokens(req)),
         defaultValues: req.body,
-        error: error instanceof Error ? error.message : "Report generation failed.",
+        error: emptyData ? "" : error instanceof Error ? error.message : "Report generation failed.",
+        warning: emptyData ? buildEmptyDataWarning(error, req.body) : "",
       }),
     );
   }
