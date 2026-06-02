@@ -339,14 +339,16 @@ function escapeHtml(value) {
 }
 
 function renderHomePage({ sites = [], authenticated = false, defaultValues = {}, error = "", googleApiError = null } = {}) {
-  const lookerPath = defaultValues.lookerCsvPath || "samples/gsc-looker-sample.csv";
-  const contentPath = defaultValues.contentCsvPath || "samples/content-sample.csv";
+  const sourceType = defaultValues.sourceType || "gsc";
+  const lookerPath = defaultValues.lookerCsvPath || (sourceType === "looker" ? "samples/gsc-looker-sample.csv" : "");
+  const contentPath = defaultValues.contentCsvPath || (sourceType === "looker" ? "samples/content-sample.csv" : "");
   const selectedSiteUrl = defaultValues.siteUrl || defaultValues.selectedSiteUrl || "";
   const selectedPermission = findSitePermission(sites, selectedSiteUrl);
   const reportPeriod = defaultValues.reportPeriod || "30d";
   const searchType = defaultValues.searchType || "web";
   const pageContains = defaultValues.pageContains || "";
   const trackedKeywords = defaultValues.trackedKeywords || "";
+  const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
   const propertyStatusMessage = googleApiError
     ? `Search Console API error: ${googleApiError.message}`
     : authenticated && sites.length === 0
@@ -447,6 +449,10 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
       margin-bottom: 12px;
     }
     .warning { margin-top: 10px; margin-bottom: 0; }
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 14px 0; }
+    .info-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: rgba(44, 110, 73, 0.06); }
+    .info-card strong { display: block; margin-bottom: 6px; }
+    .field-hidden { display: none; }
     .helper { margin-top: 16px; border-top: 1px dashed var(--line); padding-top: 12px; font-size: 0.9rem; }
   </style>
 </head>
@@ -462,13 +468,19 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
       <div class="status ${authenticated ? "" : "offline"}">${authenticated ? "Google connected" : "Google not connected"}</div>
       ${propertyStatusMessage ? `<div class="warning">${escapeHtml(propertyStatusMessage)}</div>` : ""}
 
+      <div class="info-grid">
+        <div class="info-card"><strong>GSC mode</strong><span>Looker/Content CSV files are optional when using OAuth Search Console data.</span></div>
+        <div class="info-card"><strong>Preset dates</strong><span>Preset periods use a safe GSC end date to avoid fresh-data delays. Use Custom date range for exact dates.</span></div>
+        <div class="info-card"><strong>Empty reports</strong><span>If no rows match, the app now renders diagnostics instead of failing the whole report.</span></div>
+      </div>
+
       <form action="/generate" method="post">
         <div class="grid">
           <div>
             <label>Source Type</label>
             <select name="sourceType" id="sourceType">
-              <option value="gsc" ${selected(defaultValues.sourceType || "gsc", "gsc")}>GSC API (OAuth)</option>
-              <option value="looker" ${selected(defaultValues.sourceType, "looker")}>Looker CSV</option>
+              <option value="gsc" ${selected(sourceType, "gsc")}>GSC API (OAuth)</option>
+              <option value="looker" ${selected(sourceType, "looker")}>Looker CSV</option>
             </select>
           </div>
           <div>
@@ -488,17 +500,19 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
               <option value="news" ${selected(searchType, "news")}>news</option>
             </select>
           </div>
-          <div>
+          <div class="csv-field" data-source-field="looker">
             <label>Looker CSV Path</label>
-            <input type="text" name="lookerCsvPath" value="${escapeHtml(lookerPath)}" />
+            <input type="text" name="lookerCsvPath" id="lookerCsvPath" value="${escapeHtml(lookerPath)}" data-default="samples/gsc-looker-sample.csv" />
+            <div class="note">Required only when Source Type is Looker CSV.</div>
           </div>
-          <div>
+          <div class="csv-field" data-source-field="looker">
             <label>Content Metadata CSV Path</label>
-            <input type="text" name="contentCsvPath" value="${escapeHtml(contentPath)}" />
+            <input type="text" name="contentCsvPath" id="contentCsvPath" value="${escapeHtml(contentPath)}" data-default="samples/content-sample.csv" />
+            <div class="note">Optional for GSC; used for the publishing section only.</div>
           </div>
           <div>
             <label>Report Period</label>
-            <select name="reportPeriod">
+            <select name="reportPeriod" id="reportPeriod">
               <option value="7d" ${selected(reportPeriod, "7d")}>1 week</option>
               <option value="30d" ${selected(reportPeriod, "30d")}>1 month</option>
               <option value="90d" ${selected(reportPeriod, "90d")}>3 months</option>
@@ -508,11 +522,11 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
           </div>
           <div>
             <label>Start Date (for custom)</label>
-            <input type="date" name="startDate" value="${escapeHtml(defaultValues.startDate || "")}" />
+            <input type="date" name="startDate" id="startDate" value="${escapeHtml(defaultValues.startDate || "")}" />
           </div>
           <div>
             <label>End Date (for custom)</label>
-            <input type="date" name="endDate" value="${escapeHtml(defaultValues.endDate || "")}" />
+            <input type="date" name="endDate" id="endDate" value="${escapeHtml(defaultValues.endDate || "")}" />
           </div>
           <div>
             <label>Event/Page filter: URL contains</label>
@@ -530,6 +544,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
           <div>
             <label>AI Insights</label>
             <div class="note"><input type="checkbox" name="enableAiInsights" value="1" style="width:auto;" ${checked(defaultValues.enableAiInsights)} /> Generate Gemini AI SEO insights when configured</div>
+            <div class="note">Gemini status: <strong>${geminiConfigured ? "configured" : "missing GEMINI_API_KEY"}</strong></div>
           </div>
         </div>
         <div class="actions">
@@ -547,17 +562,48 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
         const permissionEl = document.getElementById("permissionLevel");
         const sourceTypeSelect = document.getElementById("sourceType");
         const generateButton = document.getElementById("generateButton");
+        const reportPeriodSelect = document.getElementById("reportPeriod");
+        const startDateInput = document.getElementById("startDate");
+        const endDateInput = document.getElementById("endDate");
+        const lookerCsvPath = document.getElementById("lookerCsvPath");
+        const contentCsvPath = document.getElementById("contentCsvPath");
+        const sourceFields = document.querySelectorAll("[data-source-field]");
+        function syncSourceFields() {
+          const isLooker = sourceTypeSelect?.value === "looker";
+          sourceFields.forEach((field) => {
+            field.classList.toggle("field-hidden", !isLooker);
+            field.querySelectorAll("input, select, textarea").forEach((input) => {
+              input.disabled = !isLooker;
+              if (isLooker && !input.value && input.dataset.default) {
+                input.value = input.dataset.default;
+              }
+            });
+          });
+          if (!isLooker) {
+            if (lookerCsvPath) lookerCsvPath.value = "";
+            if (contentCsvPath) contentCsvPath.value = "";
+          }
+        }
+        function syncDateFields() {
+          const isCustom = reportPeriodSelect?.value === "custom";
+          [startDateInput, endDateInput].forEach((input) => {
+            if (input) input.disabled = !isCustom;
+          });
+        }
         function syncGenerateState() {
           const selectedOption = siteSelect?.options[siteSelect.selectedIndex];
           if (permissionEl) {
             permissionEl.textContent = selectedOption?.dataset?.permission || "Select a property";
           }
+          syncSourceFields();
+          syncDateFields();
           if (generateButton) {
             generateButton.disabled = sourceTypeSelect?.value === "gsc" ? !siteSelect?.value : false;
           }
         }
         siteSelect?.addEventListener("change", syncGenerateState);
         sourceTypeSelect?.addEventListener("change", syncGenerateState);
+        reportPeriodSelect?.addEventListener("change", syncGenerateState);
         syncGenerateState();
       </script>
     </div>
