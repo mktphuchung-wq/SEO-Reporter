@@ -1,5 +1,7 @@
 const REQUIRED_GOOGLE_GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 
+const DEFAULT_GOOGLE_GSC_SCOPE = REQUIRED_GOOGLE_GSC_SCOPE;
+
 type GoogleEnv = {
   NEXT_PUBLIC_APP_URL: string;
   GOOGLE_CLIENT_ID: string;
@@ -39,13 +41,18 @@ function stripEnvAssignment(name: keyof GoogleEnv, value: string): string {
   return value.replace(assignmentPattern, "").trim();
 }
 
+function unescapeCommonEnvUrlCharacters(value: string): string {
+  return value.replace(/\\\//g, "/").replace(/&amp;/g, "&");
+}
+
 function extractUrlValue(name: keyof GoogleEnv, value: string): string {
   if (!URL_ENV_NAMES.includes(name)) {
     return value;
   }
 
-  const urlMatch = value.match(/https?:\/\/[^\s"'`\\<>),;]+/);
-  return urlMatch?.[0] ?? value;
+  const normalized = unescapeCommonEnvUrlCharacters(value);
+  const urlMatch = normalized.match(/https?:\/\/[^\s"'`\\<>),;]+/);
+  return urlMatch?.[0] ?? normalized;
 }
 
 function normalizeEnvValue(name: keyof GoogleEnv, value: string): string {
@@ -79,7 +86,7 @@ function requireEnv(name: keyof GoogleEnv): string {
   return value;
 }
 
-function assertValidUrl(name: keyof GoogleEnv, value: string): void {
+function assertValidUrl(name: keyof GoogleEnv, value: string): URL {
   let url: URL;
   try {
     url = new URL(value);
@@ -90,19 +97,43 @@ function assertValidUrl(name: keyof GoogleEnv, value: string): void {
   if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
     throw new Error(`${name} must use HTTPS in production.`);
   }
+
+  return url;
+}
+
+function getOptionalValidUrl(name: keyof GoogleEnv): URL | null {
+  const value = getNormalizedGoogleEnvValue(name);
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return assertValidUrl(name, value);
+  } catch {
+    return null;
+  }
+}
+
+function getAppUrl(redirectUri: URL): string {
+  const configuredAppUrl = getOptionalValidUrl("NEXT_PUBLIC_APP_URL");
+  if (configuredAppUrl) {
+    return configuredAppUrl.toString();
+  }
+
+  return redirectUri.origin;
 }
 
 export function getGoogleEnv(): GoogleEnv {
+  const redirectUri = requireEnv("GOOGLE_REDIRECT_URI");
+  const validatedRedirectUri = assertValidUrl("GOOGLE_REDIRECT_URI", redirectUri);
+
   const env = {
-    NEXT_PUBLIC_APP_URL: requireEnv("NEXT_PUBLIC_APP_URL"),
+    NEXT_PUBLIC_APP_URL: getAppUrl(validatedRedirectUri),
     GOOGLE_CLIENT_ID: requireEnv("GOOGLE_CLIENT_ID"),
     GOOGLE_CLIENT_SECRET: requireEnv("GOOGLE_CLIENT_SECRET"),
-    GOOGLE_REDIRECT_URI: requireEnv("GOOGLE_REDIRECT_URI"),
-    GOOGLE_GSC_SCOPE: requireEnv("GOOGLE_GSC_SCOPE"),
+    GOOGLE_REDIRECT_URI: validatedRedirectUri.toString(),
+    GOOGLE_GSC_SCOPE: getNormalizedGoogleEnvValue("GOOGLE_GSC_SCOPE") || DEFAULT_GOOGLE_GSC_SCOPE,
   };
-
-  assertValidUrl("NEXT_PUBLIC_APP_URL", env.NEXT_PUBLIC_APP_URL);
-  assertValidUrl("GOOGLE_REDIRECT_URI", env.GOOGLE_REDIRECT_URI);
 
   if (env.GOOGLE_GSC_SCOPE !== REQUIRED_GOOGLE_GSC_SCOPE) {
     throw new Error(`GOOGLE_GSC_SCOPE must be ${REQUIRED_GOOGLE_GSC_SCOPE}.`);

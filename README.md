@@ -32,6 +32,8 @@ GOOGLE_REDIRECT_URI=http://localhost:3000/api/google/callback
 GOOGLE_GSC_SCOPE=https://www.googleapis.com/auth/webmasters.readonly
 ```
 
+`NEXT_PUBLIC_APP_URL` is used only as the post-OAuth redirect origin. If it is missing or accidentally pasted with extra text, the app falls back to the origin from `GOOGLE_REDIRECT_URI` instead of blocking OAuth startup. The `npm warn deprecated node-domexception@1.0.0` message is emitted by a transitive dependency during install and is not the cause of the app URL validation error.
+
 Optional local token database path:
 
 ```bash
