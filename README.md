@@ -5,6 +5,7 @@ SEO Reporter is an Express-based reporting app that can generate HTML SEO report
 - Local app: `src/server.js`
 - Main Express app: `src/app.js`
 - Vercel serverless entry: `api/index.js`
+- Vercel routing: `vercel.json` rewrites all paths to the Express serverless function so `/` shows the Express SEO Reporter UI instead of the legacy Next.js shell.
 
 ## Features
 
@@ -123,4 +124,6 @@ Output files are written to `output/` in local environments.
 
 - This project remains an Express + Vercel serverless app for the SEO Reporter flow.
 - `api/index.js` continues to export the Express app for serverless usage.
+- `vercel.json` rewrites requests to the Express function, including `/`, `/auth/*`, and existing `/api/google/*` OAuth paths.
+- The legacy `/dashboard/integrations/google-search-console` path redirects to `/` so users land on the upgraded Express report builder.
 - No real API keys or secrets are stored in this repository.

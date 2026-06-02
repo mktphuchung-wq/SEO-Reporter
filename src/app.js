@@ -73,12 +73,86 @@ function getAuthorizedClient(req) {
   return client;
 }
 
+function safeGoogleApiError(error) {
+  return {
+    status: error?.code || error?.status || error?.response?.status || null,
+    message: error instanceof Error ? error.message : "Google API request failed.",
+  };
+}
+
 async function loadSitesForSession(req) {
   const authClient = getAuthorizedClient(req);
   if (!authClient) {
     return [];
   }
   return listGscSites({ authClient });
+}
+
+async function loadSitesResultForSession(req) {
+  try {
+    return {
+      sites: await loadSitesForSession(req),
+      googleApiError: null,
+    };
+  } catch (error) {
+    return {
+      sites: [],
+      googleApiError: safeGoogleApiError(error),
+    };
+  }
+}
+
+async function buildGscSitesDebugPayload(req) {
+  const tokens = req.session?.googleTokens;
+  const authenticated = Boolean(tokens);
+
+  if (!authenticated) {
+    return {
+      authenticated: false,
+      hasAccessToken: false,
+      hasRefreshToken: false,
+      scope: null,
+      rawSiteEntryCount: 0,
+      rawSiteEntries: [],
+      filteredSiteEntryCount: 0,
+      filteredSiteEntries: [],
+    };
+  }
+
+  try {
+    const authClient = getAuthorizedClient(req);
+    const webmasters = google.webmasters({ version: "v3", auth: authClient });
+    const response = await webmasters.sites.list();
+    const rawSiteEntries = (response.data.siteEntry || [])
+      .filter((site) => site.siteUrl || site.permissionLevel)
+      .map((site) => ({
+        siteUrl: site.siteUrl || "",
+        permissionLevel: site.permissionLevel || "",
+      }))
+      .sort((a, b) => a.siteUrl.localeCompare(b.siteUrl));
+    const filteredSiteEntries = rawSiteEntries.filter(
+      (site) => site.siteUrl && site.permissionLevel && site.permissionLevel !== "siteUnverifiedUser",
+    );
+
+    return {
+      authenticated: true,
+      hasAccessToken: Boolean(tokens.access_token),
+      hasRefreshToken: Boolean(tokens.refresh_token),
+      scope: tokens.scope || null,
+      rawSiteEntryCount: rawSiteEntries.length,
+      rawSiteEntries,
+      filteredSiteEntryCount: filteredSiteEntries.length,
+      filteredSiteEntries,
+    };
+  } catch (error) {
+    return {
+      authenticated: true,
+      hasAccessToken: Boolean(tokens.access_token),
+      hasRefreshToken: Boolean(tokens.refresh_token),
+      scope: tokens.scope || null,
+      googleApiError: safeGoogleApiError(error),
+    };
+  }
 }
 
 
@@ -120,7 +194,7 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function renderHomePage({ sites = [], authenticated = false, defaultValues = {}, error = "" } = {}) {
+function renderHomePage({ sites = [], authenticated = false, defaultValues = {}, error = "", googleApiError = null } = {}) {
   const lookerPath = defaultValues.lookerCsvPath || "samples/gsc-looker-sample.csv";
   const contentPath = defaultValues.contentCsvPath || "samples/content-sample.csv";
   const selectedSiteUrl = defaultValues.siteUrl || defaultValues.selectedSiteUrl || "";
@@ -129,6 +203,11 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
   const searchType = defaultValues.searchType || "web";
   const pageContains = defaultValues.pageContains || "";
   const trackedKeywords = defaultValues.trackedKeywords || "";
+  const propertyStatusMessage = googleApiError
+    ? `Search Console API error: ${googleApiError.message}`
+    : authenticated && sites.length === 0
+      ? "No Search Console properties found for this Google account. Make sure this account has access in Google Search Console."
+      : "";
   const gscOptions = sites
     .map(
       (site) =>
@@ -215,7 +294,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
     }
     .btn-primary { background: var(--brand); color: #fff; }
     .btn-ghost { background: transparent; color: var(--brand); border: 1px solid var(--brand); }
-    .error {
+    .error, .warning {
       background: rgba(249, 87, 56, 0.12);
       border: 1px solid rgba(249, 87, 56, 0.4);
       color: #7f1d1d;
@@ -223,6 +302,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
       padding: 10px;
       margin-bottom: 12px;
     }
+    .warning { margin-top: 10px; margin-bottom: 0; }
     .helper { margin-top: 16px; border-top: 1px dashed var(--line); padding-top: 12px; font-size: 0.9rem; }
   </style>
 </head>
@@ -236,6 +316,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
         ${authenticated ? '<a class="btn btn-ghost" href="/auth/logout">Logout Google</a>' : '<a class="btn btn-primary" href="/auth/google">Authenticate Google</a>'}
       </div>
       <div class="status ${authenticated ? "" : "offline"}">${authenticated ? "Google connected" : "Google not connected"}</div>
+      ${propertyStatusMessage ? `<div class="warning">${escapeHtml(propertyStatusMessage)}</div>` : ""}
 
       <form action="/generate" method="post">
         <div class="grid">
@@ -341,7 +422,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
 </html>`;
 }
 
-app.get("/auth/google", (req, res) => {
+function startGoogleAuth(req, res) {
   try {
     const client = createOAuthClient(req);
     const state = Math.random().toString(36).slice(2);
@@ -356,9 +437,9 @@ app.get("/auth/google", (req, res) => {
   } catch (error) {
     res.status(400).send(`Auth config error: ${error instanceof Error ? error.message : "Unknown error"}`);
   }
-});
+}
 
-app.get("/auth/callback", async (req, res) => {
+async function finishGoogleAuth(req, res) {
   try {
     if (!req.query.code) {
       throw new Error("Missing authorization code.");
@@ -375,7 +456,13 @@ app.get("/auth/callback", async (req, res) => {
   } catch (error) {
     res.status(400).send(`OAuth callback failed: ${error instanceof Error ? error.message : "Unknown error"}`);
   }
-});
+}
+
+app.get("/auth/google", startGoogleAuth);
+app.get("/auth/callback", finishGoogleAuth);
+app.get("/api/google/connect", startGoogleAuth);
+app.get("/api/google/callback", finishGoogleAuth);
+app.get("/dashboard/integrations/google-search-console", (_req, res) => res.redirect("/"));
 
 app.get("/auth/logout", (req, res) => {
   req.session.googleTokens = null;
@@ -384,30 +471,26 @@ app.get("/auth/logout", (req, res) => {
 });
 
 app.get("/", async (req, res) => {
-  try {
-    const sites = await loadSitesForSession(req);
-    res.type("html").send(
-      renderHomePage({
-        sites,
-        authenticated: Boolean(req.session.googleTokens),
-        defaultValues: {
-          ...req.query,
-          selectedSiteUrl: req.session.selectedSiteUrl,
-          reportPeriod: req.session.reportPeriod,
-          pageContains: req.session.pageContains,
-          trackedKeywords: req.session.trackedKeywords,
-          searchType: req.session.searchType,
-        },
-      }),
-    );
-  } catch (error) {
-    res.type("html").send(
-      renderHomePage({
-        authenticated: Boolean(req.session.googleTokens),
-        error: error instanceof Error ? error.message : "Failed to load sites.",
-      }),
-    );
-  }
+  const { sites, googleApiError } = await loadSitesResultForSession(req);
+  res.type("html").send(
+    renderHomePage({
+      sites,
+      authenticated: Boolean(req.session.googleTokens),
+      googleApiError,
+      defaultValues: {
+        ...req.query,
+        selectedSiteUrl: req.session.selectedSiteUrl,
+        reportPeriod: req.session.reportPeriod,
+        pageContains: req.session.pageContains,
+        trackedKeywords: req.session.trackedKeywords,
+        searchType: req.session.searchType,
+      },
+    }),
+  );
+});
+
+app.get("/debug/gsc-sites", async (req, res) => {
+  res.json(await buildGscSitesDebugPayload(req));
 });
 
 app.post("/generate", async (req, res) => {
