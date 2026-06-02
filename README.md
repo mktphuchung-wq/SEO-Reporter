@@ -46,18 +46,18 @@ For local development, add this redirect URI to the Google OAuth client:
 
 `http://localhost:3000/api/google/callback`
 
-For Vercel production, if your domain is:
-
-`https://seo-reporter.vercel.app`
-
-set:
+For the current Vercel deployment, set:
 
 ```bash
-NEXT_PUBLIC_APP_URL=https://seo-reporter.vercel.app
-GOOGLE_REDIRECT_URI=https://seo-reporter.vercel.app/api/google/callback
+NEXT_PUBLIC_APP_URL=https://seo-reporter-git-main-hung-s-projects17xx.vercel.app
+GOOGLE_REDIRECT_URI=https://seo-reporter-git-main-hung-s-projects17xx.vercel.app/api/google/callback
 ```
 
-and add this exact URI in Google Cloud OAuth client settings.
+and add this exact redirect URI in Google Cloud OAuth client settings:
+
+`https://seo-reporter-git-main-hung-s-projects17xx.vercel.app/api/google/callback`
+
+If you later promote a different production domain, update both Vercel environment variables and the authorized redirect URI in Google Cloud to use that exact domain.
 
 ## Google Search Console integration
 
