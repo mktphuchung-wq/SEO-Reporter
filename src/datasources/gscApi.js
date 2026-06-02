@@ -3,6 +3,15 @@ import path from "node:path";
 
 const GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 const MAX_ROW_LIMIT = 25000;
+const ALLOWED_SEARCH_TYPES = new Set(["web", "image", "video", "news"]);
+
+function normalizeSearchType(searchType) {
+  const normalized = String(searchType || "web").toLowerCase();
+  if (!ALLOWED_SEARCH_TYPES.has(normalized)) {
+    throw new Error(`Invalid searchType: ${searchType}. Expected one of: web, image, video, news.`);
+  }
+  return normalized;
+}
 
 function normalizeRow(row) {
   const keys = row.keys || [];
@@ -54,6 +63,7 @@ export async function fetchGscRows({
     throw new Error("startDate and endDate are required for GSC request.");
   }
 
+  const normalizedSearchType = normalizeSearchType(searchType);
   const auth = resolveAuth({ authClient, keyFile });
   const webmasters = google.webmasters({ version: "v3", auth });
 
@@ -67,7 +77,7 @@ export async function fetchGscRows({
         startDate,
         endDate,
         dimensions: ["date", "page"],
-        type: searchType,
+        searchType: normalizedSearchType,
         rowLimit: MAX_ROW_LIMIT,
         startRow,
       },
@@ -87,6 +97,7 @@ export async function fetchGscRows({
 }
 
 export async function listGscSites({ authClient, keyFile }) {
+  const normalizedSearchType = normalizeSearchType(searchType);
   const auth = resolveAuth({ authClient, keyFile });
   const webmasters = google.webmasters({ version: "v3", auth });
   const response = await webmasters.sites.list();

@@ -1,3 +1,6 @@
 node_modules/
-.env
 output/
+.data/
+.env
+.env.local
+keys/

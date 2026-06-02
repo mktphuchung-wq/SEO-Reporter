@@ -68,6 +68,9 @@ function resolveRange({ startDate, endDate }) {
   const parsedEnd = parseDate(endDate);
 
   if (parsedStart && parsedEnd) {
+    if (parsedStart.isAfter(parsedEnd, "day")) {
+      throw new Error("startDate must be before or equal to endDate.");
+    }
     return {
       start: parsedStart.format("YYYY-MM-DD"),
       end: parsedEnd.format("YYYY-MM-DD"),
@@ -79,9 +82,13 @@ function resolveRange({ startDate, endDate }) {
   }
 
   if (parsedStart && !parsedEnd) {
+    const today = dayjs();
+    if (parsedStart.isAfter(today, "day")) {
+      throw new Error("startDate cannot be after today when endDate is omitted.");
+    }
     return {
       start: parsedStart.format("YYYY-MM-DD"),
-      end: dayjs().format("YYYY-MM-DD"),
+      end: today.format("YYYY-MM-DD"),
     };
   }
 
