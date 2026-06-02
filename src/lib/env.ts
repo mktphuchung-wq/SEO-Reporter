@@ -8,12 +8,43 @@ type GoogleEnv = {
   GOOGLE_GSC_SCOPE: string;
 };
 
+function stripMatchingQuotes(value: string): string {
+  let normalized = value.trim();
+
+  for (const [openingQuote, closingQuote] of [
+    ['"', '"'],
+    ["'", "'"],
+    ['\\"', '\\"'],
+    ["\\'", "\\'"],
+  ] as const) {
+    if (normalized.startsWith(openingQuote) && normalized.endsWith(closingQuote)) {
+      normalized = normalized.slice(openingQuote.length, -closingQuote.length).trim();
+      break;
+    }
+  }
+
+  return normalized;
+}
+
+function normalizeEnvValue(name: keyof GoogleEnv, value: string): string {
+  let normalized = value.trim();
+  const assignmentPrefix = `${name}=`;
+
+  if (normalized.startsWith(assignmentPrefix)) {
+    normalized = normalized.slice(assignmentPrefix.length).trim();
+  }
+
+  normalized = stripMatchingQuotes(normalized);
+
+  return normalized;
+}
+
 function requireEnv(name: keyof GoogleEnv): string {
   const value = process.env[name];
   if (!value || value.trim().length === 0) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
-  return value.trim();
+  return normalizeEnvValue(name, value);
 }
 
 function assertValidUrl(name: keyof GoogleEnv, value: string): void {
@@ -21,7 +52,7 @@ function assertValidUrl(name: keyof GoogleEnv, value: string): void {
   try {
     url = new URL(value);
   } catch {
-    throw new Error(`${name} must be a valid URL.`);
+    throw new Error(`${name} must be a valid URL. Current normalized value: ${JSON.stringify(value)}.`);
   }
 
   if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
