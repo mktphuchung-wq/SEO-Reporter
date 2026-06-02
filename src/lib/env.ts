@@ -1,4 +1,6 @@
 const REQUIRED_GOOGLE_GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
+const PRODUCTION_APP_URL = "https://seo-reporter-indol.vercel.app";
+const PRODUCTION_GOOGLE_REDIRECT_URI = `${PRODUCTION_APP_URL}/auth/callback`;
 
 const DEFAULT_GOOGLE_GSC_SCOPE = REQUIRED_GOOGLE_GSC_SCOPE;
 
@@ -114,7 +116,15 @@ function getOptionalValidUrl(name: keyof GoogleEnv): URL | null {
   }
 }
 
+function isProduction(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
 function getAppUrl(redirectUri: URL): string {
+  if (isProduction()) {
+    return PRODUCTION_APP_URL;
+  }
+
   const configuredAppUrl = getOptionalValidUrl("NEXT_PUBLIC_APP_URL");
   if (configuredAppUrl) {
     return configuredAppUrl.toString();
@@ -128,6 +138,10 @@ type GoogleEnvOptions = {
 };
 
 function getValidatedRedirectUri(redirectUri?: string): URL {
+  if (isProduction()) {
+    return assertValidUrl("GOOGLE_REDIRECT_URI", PRODUCTION_GOOGLE_REDIRECT_URI);
+  }
+
   const value = redirectUri || requireEnv("GOOGLE_REDIRECT_URI");
   return assertValidUrl("GOOGLE_REDIRECT_URI", value);
 }
@@ -150,4 +164,4 @@ export function getGoogleEnv(options: GoogleEnvOptions = {}): GoogleEnv {
   return env;
 }
 
-export { REQUIRED_GOOGLE_GSC_SCOPE };
+export { PRODUCTION_APP_URL, PRODUCTION_GOOGLE_REDIRECT_URI, REQUIRED_GOOGLE_GSC_SCOPE };

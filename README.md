@@ -43,6 +43,15 @@ GOOGLE_GSC_SCOPE=https://www.googleapis.com/auth/webmasters.readonly
 SESSION_SECRET=replace-with-a-random-local-secret
 ```
 
+Production OAuth is pinned to a single Vercel domain, regardless of preview host or environment overrides:
+
+```text
+Production app URL: https://seo-reporter-indol.vercel.app
+Production OAuth callback: https://seo-reporter-indol.vercel.app/auth/callback
+```
+
+Add only that production callback URL to the Google OAuth client's authorized redirect URIs for production. Local development can still use `GOOGLE_REDIRECT_URI=http://localhost:3000/auth/callback`.
+
 Optional:
 
 ```bash
