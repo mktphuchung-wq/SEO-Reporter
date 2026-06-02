@@ -28,6 +28,7 @@ SEO Reporter is an Express-based reporting app that can generate HTML SEO report
   - keyword winners
 - Existing URL trend, publishing, and 6-month movement sections.
 - Optional Gemini AI SEO insights in Vietnamese when `GEMINI_API_KEY` is configured.
+- Optional SEO alert generation with severity labels and Slack/email notifications for high-severity issues only.
 
 ## Environment Variables
 
@@ -58,9 +59,20 @@ Optional:
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 GEMINI_API_KEY=your-gemini-api-key
 GEMINI_MODEL=gemini-1.5-flash
+SEO_ALERTS_ENABLED=false
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/example/example/example
+ALERT_EMAIL_PROVIDER_URL=https://email-provider.example/send
+ALERT_EMAIL_PROVIDER_API_KEY=your-email-provider-api-key
+ALERT_EMAIL_FROM=seo-reporter@example.com
+ALERT_EMAIL_TO=marketing@example.com
+SEO_ALERT_HIGH_POSITION_LOSS=3
+SEO_ALERT_HIGH_IMPRESSIONS=500
+SEO_ALERT_TRACKED_CLICK_LOSS=25
+SEO_ALERT_TRACKED_CLICK_LOSS_PERCENT=30
+SEO_ALERT_CTR_HIGH_IMPRESSIONS=1000
 ```
 
-`GEMINI_API_KEY` is optional and must be provided through your local/deploy environment variables, not hard-coded in source. If it is not configured, the report still renders and shows an AI-unavailable note. If a key is ever exposed in logs, chat, or public output, rotate it in Google AI Studio and update the deployment environment variable.
+`GEMINI_API_KEY` is optional. If it is not configured, the report still renders and shows an AI-unavailable note. SEO alerts can be enabled from the report form or globally with `SEO_ALERTS_ENABLED=true`; notification delivery requires either `SLACK_WEBHOOK_URL` or `ALERT_EMAIL_PROVIDER_URL` plus `ALERT_EMAIL_TO`. The `/generate` flow sends a summary only when at least one high-severity alert exists, such as a position loss of at least 3 with at least 500 impressions or a tracked keyword with a large click loss.
 
 ## Local Test Instructions
 
@@ -98,7 +110,8 @@ To test the GSC reporting flow locally after OAuth environment variables are pre
 7. Optionally enter a page URL filter such as `/ten-su-kien/`.
 8. Optionally enter tracked keywords, one per line or separated by commas.
 9. Optionally enable Gemini AI insights if `GEMINI_API_KEY` is configured.
-10. Submit **Generate HTML Report**.
+10. Optionally enable SEO alerts after configuring Slack or email alert environment variables.
+11. Submit **Generate HTML Report**.
 
 ## Report Sections
 
@@ -111,6 +124,7 @@ The generated HTML report includes the existing SEO sections plus new GSC keywor
 - CTR Opportunity Keywords.
 - Keyword Winners.
 - Gemini AI SEO Insights when enabled and configured.
+- SEO Alerts with severity labels, generated from high-impression ranking drops, tracked keyword movement, and CTR opportunities.
 
 Average position uses Google Search Console semantics: lower is better.
 
