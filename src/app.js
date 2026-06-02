@@ -584,7 +584,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
           <div>
             <label>AI Insights</label>
             <div class="note"><input type="checkbox" name="enableAiInsights" value="1" style="width:auto;" ${checked(defaultValues.enableAiInsights)} /> Generate Gemini AI SEO insights when configured</div>
-            <div class="note">Gemini status: <strong>${geminiConfigured ? "configured" : "missing GEMINI_API_KEY"}</strong></div>
+            <div class="note">${geminiConfigured ? "Gemini configured" : "Set GEMINI_API_KEY in environment to enable AI insights."}</div>
           </div>
         </div>
         <div class="actions">
@@ -797,18 +797,20 @@ app.post("/generate", async (req, res) => {
     const nearPageOneKeywords = buildNearPageOneKeywords({ keywordRows, currentRange });
     const keywordWinners = buildKeywordWinners({ keywordRows, currentRange, previousRange });
     const ctrOpportunities = buildCtrOpportunities({ keywordRows, currentRange });
-    const geminiInsights = enableAiInsights
-      ? await generateGeminiSeoInsights({
-          sourceInfo,
-          periodCards: insights.periodCards,
-          trackedKeywordMovements,
-          highImpressionDrops,
-          nearPageOneKeywords,
-          keywordWinners,
-          ctrOpportunities,
-          url6MonthInsights: insights.url6MonthInsights,
-        })
-      : { available: false, message: "AI insight not requested." };
+    const geminiInsights = isEmptyReport
+      ? { available: false, message: "AI insight skipped because the selected GSC filters returned no page rows." }
+      : enableAiInsights
+        ? await generateGeminiSeoInsights({
+            sourceInfo,
+            periodCards: insights.periodCards,
+            trackedKeywordMovements,
+            highImpressionDrops,
+            nearPageOneKeywords,
+            keywordWinners,
+            ctrOpportunities,
+            url6MonthInsights: insights.url6MonthInsights,
+          })
+        : { available: false, message: "AI insight not requested." };
 
     const reportHtml = renderHtmlReport({
       insights,
@@ -821,6 +823,11 @@ app.post("/generate", async (req, res) => {
           pageContains,
           searchType: input.searchType || "web",
           trackedKeywordCount: trackedKeywords.length,
+        },
+        diagnostics: {
+          ...(sourceInfo.diagnostics || {}),
+          pageRowCount: sourceInfo.diagnostics?.pageRowCount ?? rows.length,
+          keywordRowCount: sourceInfo.diagnostics?.keywordRowCount ?? keywordRows.length,
         },
       },
       keywordInsights: {

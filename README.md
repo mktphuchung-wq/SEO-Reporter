@@ -60,7 +60,7 @@ GEMINI_API_KEY=your-gemini-api-key
 GEMINI_MODEL=gemini-1.5-flash
 ```
 
-`GEMINI_API_KEY` is optional. If it is not configured, the report still renders and shows an AI-unavailable note.
+`GEMINI_API_KEY` is optional and must be provided through your local/deploy environment variables, not hard-coded in source. If it is not configured, the report still renders and shows an AI-unavailable note. If a key is ever exposed in logs, chat, or public output, rotate it in Google AI Studio and update the deployment environment variable.
 
 ## Local Test Instructions
 
