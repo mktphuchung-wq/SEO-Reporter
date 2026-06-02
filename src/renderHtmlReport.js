@@ -104,6 +104,10 @@ function priorityBadge(priority) {
   return `<span class="priority priority-${escapeHtml(priority || "low")}">${escapeHtml(priority || "low")}</span>`;
 }
 
+function yesNo(value) {
+  return value ? "Yes" : "No";
+}
+
 function rowsToTable(items, mapper) {
   if (!items.length) {
     return '<p class="empty">No data</p>';
@@ -130,6 +134,7 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} })
   const ctrOpportunities = keywordInsights.ctrOpportunities || [];
   const geminiInsights = keywordInsights.geminiInsights || { available: false, message: "AI insight not requested." };
   const filters = sourceInfo.filters || {};
+  const diagnostics = sourceInfo.diagnostics || {};
 
   const chartPayload = {
     dailyLabels: perf.dailySeries.map((x) => x.date),
@@ -436,6 +441,20 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {} })
         <div class="kpi"><span>Tracked keyword count</span><strong>${formatNumber(filters.trackedKeywordCount || 0)}</strong></div>
       </div>
       <p class="note-box" style="margin-top:10px;">For average position, lower is better.</p>
+    </section>
+
+    <section>
+      <h2>GSC Diagnostics</h2>
+      ${diagnostics.emptyDataWarning ? `<p class="note-box" style="border-color: rgba(179,54,54,.25); background: rgba(179,54,54,.08);">${escapeHtml(diagnostics.emptyDataWarning)}</p>` : ""}
+      ${diagnostics.contentMetadataWarning ? `<p class="note-box" style="margin-top:8px;">${escapeHtml(diagnostics.contentMetadataWarning)}</p>` : ""}
+      <div class="kpis">
+        <div class="kpi"><span>Raw page rows</span><strong>${formatNumber(diagnostics.pageRowCount || 0)}</strong></div>
+        <div class="kpi"><span>Coalesced page rows</span><strong>${formatNumber(diagnostics.coalescedPageRowCount || 0)}</strong></div>
+        <div class="kpi"><span>Keyword rows</span><strong>${formatNumber(diagnostics.keywordRowCount || 0)}</strong></div>
+        <div class="kpi"><span>Content rows</span><strong>${formatNumber(diagnostics.contentMetadataRowCount || 0)}</strong></div>
+        <div class="kpi"><span>GSC delay days</span><strong>${diagnostics.gscDataDelayDays ?? "—"}</strong></div>
+        <div class="kpi"><span>Page filter applied</span><strong>${yesNo(Boolean(filters.pageContains))}</strong></div>
+      </div>
     </section>
 
     <section>

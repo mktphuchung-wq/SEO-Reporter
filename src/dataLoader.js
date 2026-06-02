@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { fetchGscKeywordRows, fetchGscRows } from "./datasources/gscApi.js";
 import { loadContentMetadataRows, loadLookerCsvRows } from "./lib/csv.js";
@@ -63,10 +64,11 @@ function findDateSpan(rows) {
   return { start: min, end: max };
 }
 
-export function resolveRange({ startDate, endDate, reportPeriod } = {}) {
+export function resolveRange({ startDate, endDate, reportPeriod, defaultEndDate } = {}) {
+  const safeDefaultEndDate = defaultEndDate || dayjs().format("YYYY-MM-DD");
   const periodDays = REPORT_PERIOD_DAYS[reportPeriod];
   if (periodDays) {
-    return clampDateRangeByDays(dayjs().format("YYYY-MM-DD"), periodDays);
+    return clampDateRangeByDays(safeDefaultEndDate, periodDays);
   }
 
   const parsedStart = parseDate(startDate);
@@ -86,11 +88,43 @@ export function resolveRange({ startDate, endDate, reportPeriod } = {}) {
   if (parsedStart && !parsedEnd) {
     return {
       start: parsedStart.format("YYYY-MM-DD"),
-      end: dayjs().format("YYYY-MM-DD"),
+      end: safeDefaultEndDate,
     };
   }
 
-  return clampDateRangeByDays(dayjs().format("YYYY-MM-DD"), 180);
+  return clampDateRangeByDays(safeDefaultEndDate, 180);
+}
+
+
+const GSC_DATA_DELAY_DAYS = Number.parseInt(process.env.GSC_DATA_DELAY_DAYS || "2", 10);
+
+function getGscDefaultEndDate() {
+  const safeDelayDays = Number.isFinite(GSC_DATA_DELAY_DAYS) && GSC_DATA_DELAY_DAYS >= 0 ? GSC_DATA_DELAY_DAYS : 2;
+  return dayjs().subtract(safeDelayDays, "day").format("YYYY-MM-DD");
+}
+
+function isFileNotFoundError(error) {
+  return error?.code === "ENOENT" || /no such file or directory/i.test(error?.message || "");
+}
+
+async function loadOptionalContentRows(contentCsvPath, { optional = false } = {}) {
+  const trimmedPath = String(contentCsvPath || "").trim();
+  if (!trimmedPath) {
+    return { rows: [], warning: null };
+  }
+
+  try {
+    await fs.access(path.resolve(trimmedPath));
+    return { rows: await loadContentMetadataRows(trimmedPath), warning: null };
+  } catch (error) {
+    if (optional && isFileNotFoundError(error)) {
+      return {
+        rows: [],
+        warning: `Content metadata CSV not found at ${trimmedPath}; publishing section will be empty.`,
+      };
+    }
+    throw error;
+  }
 }
 
 const REPORT_PERIOD_DAYS = {
@@ -140,7 +174,7 @@ export async function loadReportData({
       throw new Error("siteUrl is required when sourceType = gsc");
     }
 
-    const range = resolveRange({ startDate, endDate, reportPeriod });
+    const range = resolveRange({ startDate, endDate, reportPeriod, defaultEndDate: getGscDefaultEndDate() });
 
     const comparisonRange = previousRangeFor(range);
     const keywordFetchRange = {
@@ -177,6 +211,13 @@ export async function loadReportData({
         reportPeriod: reportPeriod || "custom",
         pageContains: trimmedPageContains,
         searchType: normalizedSearchType,
+      },
+      diagnostics: {
+        pageRowCount: rows.length,
+        keywordRowCount: keywordRows.length,
+        queryRange: range,
+        keywordFetchRange,
+        gscDataDelayDays: Number.isFinite(GSC_DATA_DELAY_DAYS) ? GSC_DATA_DELAY_DAYS : 2,
       },
     };
   } else {
@@ -215,10 +256,24 @@ export async function loadReportData({
     }
   }
 
-  const contentRows = contentCsvPath ? await loadContentMetadataRows(contentCsvPath) : [];
+  const contentResult = await loadOptionalContentRows(contentCsvPath, { optional: normalizedType === "gsc" });
+  const contentRows = contentResult.rows;
   const coalesced = coalesceRows(rows);
+  sourceInfo = {
+    ...sourceInfo,
+    diagnostics: {
+      ...(sourceInfo?.diagnostics || {}),
+      coalescedPageRowCount: coalesced.length,
+      contentMetadataRowCount: contentRows.length,
+      contentMetadataWarning: contentResult.warning,
+      emptyDataWarning:
+        normalizedType === "gsc" && !coalesced.length
+          ? "No GSC page rows matched this property, search type, date range, and page filter. Try a wider range or remove the page filter."
+          : null,
+    },
+  };
 
-  if (!coalesced.length) {
+  if (!coalesced.length && normalizedType !== "gsc") {
     throw new Error("No rows found after parsing data source.");
   }
 
