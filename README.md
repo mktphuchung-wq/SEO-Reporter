@@ -49,7 +49,7 @@ For local development, add this redirect URI to the Google OAuth client:
 For the current Vercel deployment, set:
 
 ```bash
-NEXT_PUBLIC_APP_URL=https://seo-reporter-git-main-hung-s-projects17xx.vercel.app
+NEXT_PUBLIC_APP_URL="https://seo-reporter-git-main-hung-s-projects17xx.vercel.app/"
 GOOGLE_REDIRECT_URI=https://seo-reporter-git-main-hung-s-projects17xx.vercel.app/api/google/callback
 ```
 
