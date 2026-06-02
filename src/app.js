@@ -35,6 +35,9 @@ const GOOGLE_OAUTH_STATE_MAX_AGE_MS = 1000 * 60 * 10;
 const GOOGLE_TOKENS_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 
+const PRESET_STORAGE_PATH = path.resolve(process.env.PRESET_STORAGE_PATH || ".data/presets.json");
+const PRESET_FIELDS = ["siteUrl", "searchType", "reportPeriod", "startDate", "endDate", "pageContains", "trackedKeywords", "enableAiInsights"];
+
 app.set("trust proxy", 1);
 app.use(
   session({
@@ -338,12 +341,120 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function renderHomePage({ sites = [], authenticated = false, defaultValues = {}, error = "", googleApiError = null } = {}) {
+function safeJsonForHtml(value) {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
+function normalizePresetInput(input = {}) {
+  return {
+    siteUrl: String(input.siteUrl || "").trim(),
+    searchType: ["web", "image", "video", "news"].includes(input.searchType) ? input.searchType : "web",
+    reportPeriod: Object.prototype.hasOwnProperty.call(REPORT_PERIOD_LABELS, input.reportPeriod) ? input.reportPeriod : "30d",
+    startDate: String(input.startDate || "").trim(),
+    endDate: String(input.endDate || "").trim(),
+    pageContains: String(input.pageContains || "").trim(),
+    trackedKeywords: String(input.trackedKeywords || ""),
+    enableAiInsights: input.enableAiInsights === true || input.enableAiInsights === "1" || input.enableAiInsights === "on",
+  };
+}
+
+function isPreset(value) {
+  return value && typeof value === "object" && PRESET_FIELDS.every((field) => Object.prototype.hasOwnProperty.call(value, field));
+}
+
+async function readPresetStore() {
+  try {
+    const raw = await fs.readFile(PRESET_STORAGE_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.presets)) {
+      return { presets: [] };
+    }
+
+    return {
+      presets: parsed.presets.filter(isPreset).map((preset) => ({
+        ...normalizePresetInput(preset),
+        id: String(preset.id || crypto.randomUUID()),
+        name: String(preset.name || preset.siteUrl || "Untitled preset"),
+        createdAt: preset.createdAt || new Date().toISOString(),
+        updatedAt: preset.updatedAt || preset.createdAt || new Date().toISOString(),
+      })),
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { presets: [] };
+    }
+    throw error;
+  }
+}
+
+async function writePresetStore(store) {
+  await fs.mkdir(path.dirname(PRESET_STORAGE_PATH), { recursive: true });
+  await fs.writeFile(PRESET_STORAGE_PATH, JSON.stringify(store, null, 2), "utf8");
+}
+
+async function listPresets() {
+  const store = await readPresetStore();
+  return store.presets.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+}
+
+async function savePreset(input) {
+  const preset = normalizePresetInput(input);
+  if (!preset.siteUrl) {
+    throw new Error("Please select a GSC property before saving a preset.");
+  }
+
+  const store = await readPresetStore();
+  const now = new Date().toISOString();
+  const requestedName = String(input.presetName || "").trim();
+  const name = requestedName || `${preset.siteUrl} preset`;
+  const existingIndex = store.presets.findIndex((storedPreset) => storedPreset.siteUrl === preset.siteUrl && storedPreset.name === name);
+  const nextPreset = {
+    ...(existingIndex >= 0 ? store.presets[existingIndex] : { id: crypto.randomUUID(), createdAt: now }),
+    ...preset,
+    name,
+    updatedAt: now,
+  };
+
+  if (existingIndex >= 0) {
+    store.presets[existingIndex] = nextPreset;
+  } else {
+    store.presets.push(nextPreset);
+  }
+
+  await writePresetStore(store);
+  return nextPreset;
+}
+
+function findLatestPresetForSite(presets, siteUrl) {
+  if (!siteUrl) {
+    return null;
+  }
+
+  return presets
+    .filter((preset) => preset.siteUrl === siteUrl)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0] || null;
+}
+
+function rememberPresetInSession(req, preset) {
+  req.session.selectedSiteUrl = preset.siteUrl;
+  req.session.reportPeriod = preset.reportPeriod;
+  req.session.pageContains = preset.pageContains;
+  req.session.trackedKeywords = preset.trackedKeywords;
+  req.session.searchType = preset.searchType;
+  req.session.startDate = preset.startDate;
+  req.session.endDate = preset.endDate;
+  req.session.enableAiInsights = preset.enableAiInsights;
+}
+
+function renderHomePage({ sites = [], authenticated = false, defaultValues = {}, presets = [], error = "", success = "", googleApiError = null } = {}) {
   const sourceType = defaultValues.sourceType || "gsc";
   const lookerPath = defaultValues.lookerCsvPath || (sourceType === "looker" ? "samples/gsc-looker-sample.csv" : "");
   const contentPath = defaultValues.contentCsvPath || (sourceType === "looker" ? "samples/content-sample.csv" : "");
   const selectedSiteUrl = defaultValues.siteUrl || defaultValues.selectedSiteUrl || "";
   const selectedPermission = findSitePermission(sites, selectedSiteUrl);
+  const presetOptions = presets
+    .map((preset) => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)} — ${escapeHtml(preset.siteUrl)}</option>`)
+    .join("");
   const reportPeriod = defaultValues.reportPeriod || "30d";
   const searchType = defaultValues.searchType || "web";
   const pageContains = defaultValues.pageContains || "";
@@ -440,7 +551,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
     }
     .btn-primary { background: var(--brand); color: #fff; }
     .btn-ghost { background: transparent; color: var(--brand); border: 1px solid var(--brand); }
-    .error, .warning {
+    .error, .warning, .success {
       background: rgba(249, 87, 56, 0.12);
       border: 1px solid rgba(249, 87, 56, 0.4);
       color: #7f1d1d;
@@ -449,11 +560,25 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
       margin-bottom: 12px;
     }
     .warning { margin-top: 10px; margin-bottom: 0; }
+    .success { background: rgba(44, 110, 73, 0.12); border-color: rgba(44, 110, 73, 0.35); color: var(--brand); }
     .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 14px 0; }
     .info-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: rgba(44, 110, 73, 0.06); }
     .info-card strong { display: block; margin-bottom: 6px; }
     .field-hidden { display: none; }
     .helper { margin-top: 16px; border-top: 1px dashed var(--line); padding-top: 12px; font-size: 0.9rem; }
+    .preset-panel {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) minmax(220px, 0.8fr) auto;
+      gap: 12px;
+      align-items: end;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 14px;
+      background: rgba(44, 110, 73, 0.05);
+    }
+    .preset-actions { display: flex; align-items: end; min-height: 74px; }
+    @media (max-width: 780px) { .preset-panel { grid-template-columns: 1fr; } .preset-actions { min-height: auto; } }
   </style>
 </head>
 <body>
@@ -462,6 +587,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
       <h1>SEO Report Builder</h1>
       <p>Authenticate Google first, then select an authorized Search Console property.</p>
       ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
+      ${success ? `<div class="success">${escapeHtml(success)}</div>` : ""}
       <div class="actions">
         ${authenticated ? '<a class="btn btn-ghost" href="/auth/logout">Logout Google</a>' : '<a class="btn btn-primary" href="/auth/google">Authenticate Google</a>'}
       </div>
@@ -475,6 +601,23 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
       </div>
 
       <form action="/generate" method="post">
+        <div class="preset-panel">
+          <div>
+            <label>Preset</label>
+            <select id="presetSelect">
+              <option value="">Choose a saved preset</option>
+              ${presetOptions}
+            </select>
+            <div class="note">Selecting a GSC property auto-loads its most recently saved preset.</div>
+          </div>
+          <div>
+            <label>Preset name</label>
+            <input type="text" name="presetName" id="presetName" placeholder="Monthly SEO review" />
+          </div>
+          <div class="preset-actions">
+            <button type="submit" formaction="/presets" formmethod="post" class="btn btn-ghost">Save preset</button>
+          </div>
+        </div>
         <div class="grid">
           <div>
             <label>Source Type</label>
@@ -493,7 +636,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
           </div>
           <div>
             <label>Search Type</label>
-            <select name="searchType">
+            <select name="searchType" id="searchType">
               <option value="web" ${selected(searchType, "web")}>web</option>
               <option value="image" ${selected(searchType, "image")}>image</option>
               <option value="video" ${selected(searchType, "video")}>video</option>
@@ -530,7 +673,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
           </div>
           <div>
             <label>Event/Page filter: URL contains</label>
-            <input type="text" name="pageContains" value="${escapeHtml(pageContains)}" placeholder="/ten-su-kien/" />
+            <input type="text" name="pageContains" id="pageContains" value="${escapeHtml(pageContains)}" placeholder="/ten-su-kien/" />
           </div>
           <div>
             <label>Service Key File (optional fallback)</label>
@@ -538,12 +681,12 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
           </div>
           <div>
             <label>Tracked keywords</label>
-            <textarea name="trackedKeywords" placeholder="One keyword per line">${escapeHtml(trackedKeywords)}</textarea>
+            <textarea name="trackedKeywords" id="trackedKeywords" placeholder="One keyword per line">${escapeHtml(trackedKeywords)}</textarea>
             <div class="note">One keyword per line or comma-separated keywords.</div>
           </div>
           <div>
             <label>AI Insights</label>
-            <div class="note"><input type="checkbox" name="enableAiInsights" value="1" style="width:auto;" ${checked(defaultValues.enableAiInsights)} /> Generate Gemini AI SEO insights when configured</div>
+            <div class="note"><input type="checkbox" name="enableAiInsights" id="enableAiInsights" value="1" style="width:auto;" ${checked(defaultValues.enableAiInsights)} /> Generate Gemini AI SEO insights when configured</div>
             <div class="note">Gemini status: <strong>${geminiConfigured ? "configured" : "missing GEMINI_API_KEY"}</strong></div>
           </div>
         </div>
@@ -568,6 +711,13 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
         const lookerCsvPath = document.getElementById("lookerCsvPath");
         const contentCsvPath = document.getElementById("contentCsvPath");
         const sourceFields = document.querySelectorAll("[data-source-field]");
+        const presetSelect = document.getElementById("presetSelect");
+        const presetNameInput = document.getElementById("presetName");
+        const searchTypeSelect = document.getElementById("searchType");
+        const pageContainsInput = document.getElementById("pageContains");
+        const trackedKeywordsInput = document.getElementById("trackedKeywords");
+        const enableAiInsightsInput = document.getElementById("enableAiInsights");
+        const presets = ${safeJsonForHtml(presets)};
         function syncSourceFields() {
           const isLooker = sourceTypeSelect?.value === "looker";
           sourceFields.forEach((field) => {
@@ -590,6 +740,25 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
             if (input) input.disabled = !isCustom;
           });
         }
+        function applyPreset(preset) {
+          if (!preset) return;
+          if (siteSelect && preset.siteUrl) siteSelect.value = preset.siteUrl;
+          if (searchTypeSelect) searchTypeSelect.value = preset.searchType || "web";
+          if (reportPeriodSelect) reportPeriodSelect.value = preset.reportPeriod || "30d";
+          if (startDateInput) startDateInput.value = preset.startDate || "";
+          if (endDateInput) endDateInput.value = preset.endDate || "";
+          if (pageContainsInput) pageContainsInput.value = preset.pageContains || "";
+          if (trackedKeywordsInput) trackedKeywordsInput.value = preset.trackedKeywords || "";
+          if (enableAiInsightsInput) enableAiInsightsInput.checked = Boolean(preset.enableAiInsights);
+          if (presetNameInput) presetNameInput.value = preset.name || "";
+          if (presetSelect && preset.id) presetSelect.value = preset.id;
+          syncGenerateState();
+        }
+        function findLatestPreset(siteUrl) {
+          return presets
+            .filter((preset) => preset.siteUrl === siteUrl)
+            .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+        }
         function syncGenerateState() {
           const selectedOption = siteSelect?.options[siteSelect.selectedIndex];
           if (permissionEl) {
@@ -601,7 +770,18 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
             generateButton.disabled = sourceTypeSelect?.value === "gsc" ? !siteSelect?.value : false;
           }
         }
-        siteSelect?.addEventListener("change", syncGenerateState);
+        presetSelect?.addEventListener("change", () => {
+          applyPreset(presets.find((preset) => preset.id === presetSelect.value));
+        });
+        siteSelect?.addEventListener("change", () => {
+          const latestPreset = findLatestPreset(siteSelect.value);
+          if (latestPreset) {
+            applyPreset(latestPreset);
+            return;
+          }
+          if (presetSelect) presetSelect.value = "";
+          syncGenerateState();
+        });
         sourceTypeSelect?.addEventListener("change", syncGenerateState);
         reportPeriodSelect?.addEventListener("change", syncGenerateState);
         syncGenerateState();
@@ -678,21 +858,51 @@ app.get("/auth/logout", (req, res) => {
 
 app.get("/", async (req, res) => {
   const { sites, googleApiError } = await loadSitesResultForSession(req);
+  const presets = await listPresets().catch(() => []);
+  const requestedSiteUrl = req.query.siteUrl || req.session.selectedSiteUrl || "";
+  const latestPreset = findLatestPresetForSite(presets, requestedSiteUrl);
   res.type("html").send(
     renderHomePage({
       sites,
       authenticated: Boolean(getGoogleTokens(req)),
       googleApiError,
+      presets,
+      success: req.query.presetSaved ? "Preset saved." : "",
       defaultValues: {
-        ...req.query,
+        ...(latestPreset || {}),
         selectedSiteUrl: req.session.selectedSiteUrl,
         reportPeriod: req.session.reportPeriod,
         pageContains: req.session.pageContains,
         trackedKeywords: req.session.trackedKeywords,
         searchType: req.session.searchType,
+        startDate: req.session.startDate,
+        endDate: req.session.endDate,
+        enableAiInsights: req.session.enableAiInsights,
+        ...req.query,
       },
     }),
   );
+});
+
+app.post("/presets", async (req, res) => {
+  try {
+    const preset = await savePreset(req.body);
+    rememberPresetInSession(req, preset);
+    res.redirect(`/?${new URLSearchParams({ siteUrl: preset.siteUrl, presetSaved: "1" }).toString()}`);
+  } catch (error) {
+    const { sites, googleApiError } = await loadSitesResultForSession(req);
+    const presets = await listPresets().catch(() => []);
+    res.status(400).type("html").send(
+      renderHomePage({
+        sites,
+        authenticated: Boolean(getGoogleTokens(req)),
+        googleApiError,
+        presets,
+        defaultValues: req.body,
+        error: error instanceof Error ? error.message : "Preset save failed.",
+      }),
+    );
+  }
 });
 
 app.get("/debug/gsc-sites", async (req, res) => {
@@ -714,13 +924,16 @@ app.post("/generate", async (req, res) => {
     const reportPeriod = req.body.reportPeriod || "30d";
     const pageContains = String(req.body.pageContains || "").trim();
     const trackedKeywordsInput = req.body.trackedKeywords || "";
-    const enableAiInsights = Boolean(req.body.enableAiInsights);
+    const enableAiInsights = req.body.enableAiInsights === true || req.body.enableAiInsights === "1" || req.body.enableAiInsights === "on";
 
     req.session.selectedSiteUrl = req.body.siteUrl || req.session.selectedSiteUrl;
     req.session.reportPeriod = reportPeriod;
     req.session.pageContains = pageContains;
     req.session.trackedKeywords = trackedKeywordsInput;
     req.session.searchType = req.body.searchType || "web";
+    req.session.startDate = req.body.startDate || "";
+    req.session.endDate = req.body.endDate || "";
+    req.session.enableAiInsights = enableAiInsights;
 
     const input = {
       sourceType,
@@ -807,6 +1020,7 @@ app.post("/generate", async (req, res) => {
       renderHomePage({
         sites,
         authenticated: Boolean(getGoogleTokens(req)),
+        presets: await listPresets().catch(() => []),
         defaultValues: req.body,
         error: error instanceof Error ? error.message : "Report generation failed.",
       }),
