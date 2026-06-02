@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import session from "express-session";
@@ -26,6 +27,10 @@ const app = express();
 const OUTPUT_DIR = path.resolve("output");
 const SESSION_SECRET = process.env.SESSION_SECRET || "dev-session-secret-change-me";
 const GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
+const PRODUCTION_APP_ORIGIN = "https://seo-reporter-indol.vercel.app";
+const GOOGLE_OAUTH_CALLBACK_PATH = "/auth/callback";
+const GOOGLE_OAUTH_STATE_COOKIE = "google_oauth_state";
+const GOOGLE_OAUTH_STATE_MAX_AGE_MS = 1000 * 60 * 10;
 
 app.set("trust proxy", 1);
 app.use(
@@ -46,11 +51,92 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use("/reports", express.static(OUTPUT_DIR));
 
+function isProduction() {
+  return process.env.NODE_ENV === "production";
+}
+
+function getRequestOrigin(req) {
+  return `${req.protocol}://${req.get("host")}`;
+}
+
+function getProductionUrl(pathname) {
+  return new URL(pathname, PRODUCTION_APP_ORIGIN).toString();
+}
+
 function buildRedirectUri(req) {
+  if (isProduction()) {
+    return getProductionUrl(GOOGLE_OAUTH_CALLBACK_PATH);
+  }
   if (process.env.GOOGLE_REDIRECT_URI) {
     return process.env.GOOGLE_REDIRECT_URI;
   }
-  return `${req.protocol}://${req.get("host")}/auth/callback`;
+  return new URL(GOOGLE_OAUTH_CALLBACK_PATH, getRequestOrigin(req)).toString();
+}
+
+function shouldRedirectToProductionOAuth(req) {
+  if (!isProduction()) {
+    return false;
+  }
+  return req.get("host") !== new URL(PRODUCTION_APP_ORIGIN).host;
+}
+
+function generateOAuthState() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function isValidOAuthState(receivedState, expectedState) {
+  if (!receivedState || !expectedState) {
+    return false;
+  }
+
+  const received = Buffer.from(String(receivedState));
+  const expected = Buffer.from(String(expectedState));
+  return received.length === expected.length && crypto.timingSafeEqual(received, expected);
+}
+
+function setOAuthStateCookie(res, state) {
+  res.cookie(GOOGLE_OAUTH_STATE_COOKIE, state, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: isProduction(),
+    path: "/",
+    maxAge: GOOGLE_OAUTH_STATE_MAX_AGE_MS,
+  });
+}
+
+function clearOAuthStateCookie(res) {
+  res.clearCookie(GOOGLE_OAUTH_STATE_COOKIE, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: isProduction(),
+    path: "/",
+  });
+}
+
+function parseCookieHeader(cookieHeader) {
+  if (!cookieHeader) {
+    return {};
+  }
+
+  return cookieHeader.split(";").reduce((cookies, cookie) => {
+    const separatorIndex = cookie.indexOf("=");
+    if (separatorIndex === -1) {
+      return cookies;
+    }
+
+    const name = cookie.slice(0, separatorIndex).trim();
+    const value = cookie.slice(separatorIndex + 1).trim();
+    if (!name) {
+      return cookies;
+    }
+
+    try {
+      cookies[name] = decodeURIComponent(value);
+    } catch {
+      cookies[name] = value;
+    }
+    return cookies;
+  }, {});
 }
 
 function createOAuthClient(req) {
@@ -424,9 +510,15 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
 
 function startGoogleAuth(req, res) {
   try {
+    if (shouldRedirectToProductionOAuth(req)) {
+      res.redirect(getProductionUrl("/auth/google"));
+      return;
+    }
+
     const client = createOAuthClient(req);
-    const state = Math.random().toString(36).slice(2);
+    const state = generateOAuthState();
     req.session.oauthState = state;
+    setOAuthStateCookie(res, state);
     const url = client.generateAuthUrl({
       access_type: "offline",
       prompt: "consent",
@@ -441,10 +533,17 @@ function startGoogleAuth(req, res) {
 
 async function finishGoogleAuth(req, res) {
   try {
+    if (shouldRedirectToProductionOAuth(req)) {
+      res.redirect(getProductionUrl(`${GOOGLE_OAUTH_CALLBACK_PATH}?${new URLSearchParams(req.query).toString()}`));
+      return;
+    }
+
     if (!req.query.code) {
       throw new Error("Missing authorization code.");
     }
-    if (!req.query.state || req.query.state !== req.session.oauthState) {
+
+    const expectedState = parseCookieHeader(req.headers.cookie)[GOOGLE_OAUTH_STATE_COOKIE] || req.session.oauthState;
+    if (!isValidOAuthState(req.query.state, expectedState)) {
       throw new Error("Invalid OAuth state.");
     }
 
@@ -452,8 +551,11 @@ async function finishGoogleAuth(req, res) {
     const { tokens } = await client.getToken(String(req.query.code));
     req.session.googleTokens = tokens;
     req.session.oauthState = null;
+    clearOAuthStateCookie(res);
     res.redirect("/");
   } catch (error) {
+    req.session.oauthState = null;
+    clearOAuthStateCookie(res);
     res.status(400).send(`OAuth callback failed: ${error instanceof Error ? error.message : "Unknown error"}`);
   }
 }

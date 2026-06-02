@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { getGoogleEnv } from "../env";
+import { getGoogleEnv, PRODUCTION_GOOGLE_REDIRECT_URI } from "../env";
 
 export type GoogleTokenResponse = {
   access_token: string;
@@ -24,8 +24,12 @@ export function isValidOAuthState(receivedState: string | null, expectedState: s
 }
 
 export function getGoogleCallbackRedirectUri(requestUrl: string): string {
+  if (process.env.NODE_ENV === "production") {
+    return PRODUCTION_GOOGLE_REDIRECT_URI;
+  }
+
   const url = new URL(requestUrl);
-  return new URL("/api/google/callback", url.origin).toString();
+  return new URL("/auth/callback", url.origin).toString();
 }
 
 export function buildGoogleOAuthUrl(state: string, redirectUri?: string): string {
