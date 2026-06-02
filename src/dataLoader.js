@@ -122,6 +122,20 @@ function isFileNotFoundError(error) {
   return error?.code === "ENOENT" || /no such file or directory/i.test(error?.message || "");
 }
 
+async function loadLookerRowsOrThrow(lookerCsvPath) {
+  const absoluteLookerPath = path.resolve(lookerCsvPath);
+
+  try {
+    return await loadLookerCsvRows(absoluteLookerPath);
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      throw new Error(`Looker CSV not found at ${absoluteLookerPath}.`);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse Looker CSV at ${absoluteLookerPath}: ${message}`);
+  }
+}
+
 async function loadOptionalContentRows(contentCsvPath, { optional = false } = {}) {
   const trimmedPath = String(contentCsvPath || "").trim();
   if (!trimmedPath) {
@@ -242,7 +256,7 @@ export async function loadReportData({
     }
 
     const absoluteLookerPath = path.resolve(lookerCsvPath);
-    rows = await loadLookerCsvRows(absoluteLookerPath);
+    rows = await loadLookerRowsOrThrow(absoluteLookerPath);
     const span = findDateSpan(rows);
 
     if (startDate || endDate) {
@@ -275,17 +289,23 @@ export async function loadReportData({
   const contentResult = await loadOptionalContentRows(contentCsvPath, { optional: normalizedType === "gsc" });
   const contentRows = contentResult.rows;
   const coalesced = coalesceRows(rows);
+  const isEmptyGscReport = normalizedType === "gsc" && coalesced.length === 0;
+  const emptyReason = isEmptyGscReport
+    ? "No GSC page rows matched this property, search type, date range, and page filter."
+    : null;
+
   sourceInfo = {
     ...sourceInfo,
+    emptyReason,
     diagnostics: {
       ...(sourceInfo?.diagnostics || {}),
       coalescedPageRowCount: coalesced.length,
       contentMetadataRowCount: contentRows.length,
       contentMetadataWarning: contentResult.warning,
-      emptyDataWarning:
-        normalizedType === "gsc" && !coalesced.length
-          ? "No GSC page rows matched this property, search type, date range, and page filter. Try a wider range or remove the page filter."
-          : null,
+      emptyReason,
+      emptyDataWarning: emptyReason
+        ? `${emptyReason} Try a wider range or remove the page filter.`
+        : null,
     },
   };
 
@@ -298,5 +318,6 @@ export async function loadReportData({
     keywordRows,
     contentRows,
     sourceInfo,
+    emptyReason,
   };
 }
