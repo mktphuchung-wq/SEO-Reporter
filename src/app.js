@@ -1,69 +1,43 @@
 import express from "express";
 import dotenv from "dotenv";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import session from "express-session";
-import { google } from "googleapis";
 import { buildSeoInsights } from "./analytics.js";
 import { loadReportData } from "./dataLoader.js";
 import { renderHtmlReport } from "./renderHtmlReport.js";
 import { listGscSites } from "./datasources/gscApi.js";
+import { GOOGLE_GSC_SCOPE } from "./config.js";
+import { attachSession } from "./lib/authSession.js";
+import { upsertGoogleTokens } from "./lib/authDatabase.js";
+import {
+  buildGoogleConnectUrl,
+  createGoogleAuthClientForUser,
+  exchangeCodeForGoogleTokens,
+  getValidGoogleAccessToken,
+} from "./lib/googleOAuth.js";
 
 dotenv.config();
 
 const app = express();
 const OUTPUT_DIR = path.resolve("output");
-const SESSION_SECRET = process.env.SESSION_SECRET || "dev-session-secret-change-me";
-const GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 
 app.set("trust proxy", 1);
-app.use(
-  session({
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 1000 * 60 * 60 * 8,
-    },
-  }),
-);
+app.use(attachSession);
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use("/reports", express.static(OUTPUT_DIR));
 
-function buildRedirectUri(req) {
-  if (process.env.GOOGLE_REDIRECT_URI) {
-    return process.env.GOOGLE_REDIRECT_URI;
-  }
-  return `${req.protocol}://${req.get("host")}/auth/callback`;
-}
-
-function createOAuthClient(req) {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = buildRedirectUri(req);
-  if (!clientId || !clientSecret) {
-    throw new Error("Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET.");
-  }
-  return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
-}
-
-function getAuthorizedClient(req) {
-  const tokens = req.session?.googleTokens;
-  if (!tokens) {
+async function getAuthorizedClient(req) {
+  if (!req.authSession?.userId) {
     return null;
   }
-  const client = createOAuthClient(req);
-  client.setCredentials(tokens);
-  return client;
+  return createGoogleAuthClientForUser(req.authSession.userId);
 }
 
 async function loadSitesForSession(req) {
-  const authClient = getAuthorizedClient(req);
+  const authClient = await getAuthorizedClient(req);
   if (!authClient) {
     return [];
   }
@@ -169,10 +143,10 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
   <div class="shell">
     <div class="card">
       <h1>SEO Report Builder</h1>
-      <p>Authenticate Google first, then select an authorized Search Console property.</p>
+      <p>Connect Google first, then select an authorized Search Console property.</p>
       ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
       <div class="actions">
-        ${authenticated ? '<a class="btn btn-ghost" href="/auth/logout">Logout Google</a>' : '<a class="btn btn-primary" href="/auth/google">Authenticate Google</a>'}
+        ${authenticated ? '<a class="btn btn-ghost" href="/auth/logout">Disconnect session</a>' : '<a class="btn btn-primary" href="/api/google/connect">Connect Google</a>'}
       </div>
 
       <form action="/generate" method="post">
@@ -187,7 +161,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
           <div>
             <label>GSC Property (choose after auth)</label>
             <select name="siteUrl">
-              <option value="">${authenticated ? "Select a property" : "Authenticate first"}</option>
+              <option value="">${authenticated ? "Select a property" : "Connect Google first"}</option>
               ${gscOptions}
             </select>
           </div>
@@ -230,6 +204,7 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
         <h2>Data format</h2>
         <p>Looker CSV: <code>Date,Page,Clicks,Impressions,CTR,Position</code></p>
         <p>Content CSV: <code>url,title,topic,published_date</code></p>
+        <p>Google scope: <code>${escapeHtml(GOOGLE_GSC_SCOPE)}</code></p>
       </div>
     </div>
   </div>
@@ -237,46 +212,68 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
 </html>`;
 }
 
-app.get("/auth/google", (req, res) => {
+app.get("/api/google/connect", async (req, res) => {
   try {
-    const client = createOAuthClient(req);
-    const state = Math.random().toString(36).slice(2);
-    req.session.oauthState = state;
-    const url = client.generateAuthUrl({
-      access_type: "offline",
-      prompt: "consent",
-      scope: [GSC_SCOPE],
-      state,
-    });
-    res.redirect(url);
+    const session = await req.ensureAuthSession();
+    const state = crypto.randomUUID();
+    session.data.googleOAuthState = state;
+    await req.saveAuthSession();
+
+    res.redirect(buildGoogleConnectUrl(state));
   } catch (error) {
     res.status(400).send(`Auth config error: ${error instanceof Error ? error.message : "Unknown error"}`);
   }
 });
 
-app.get("/auth/callback", async (req, res) => {
+app.get("/auth/google", (req, res) => {
+  res.redirect("/api/google/connect");
+});
+
+app.get("/api/auth/callback/google", async (req, res) => {
   try {
+    const session = await req.ensureAuthSession();
     if (!req.query.code) {
       throw new Error("Missing authorization code.");
     }
-    if (!req.query.state || req.query.state !== req.session.oauthState) {
+    if (!req.query.state || req.query.state !== session.data.googleOAuthState) {
       throw new Error("Invalid OAuth state.");
     }
 
-    const client = createOAuthClient(req);
-    const { tokens } = await client.getToken(String(req.query.code));
-    req.session.googleTokens = tokens;
-    req.session.oauthState = null;
+    const tokens = await exchangeCodeForGoogleTokens(String(req.query.code));
+    await upsertGoogleTokens({ userId: session.userId, tokens });
+    session.data.googleOAuthState = null;
+    session.data.googleConnectedAt = new Date().toISOString();
+    await req.saveAuthSession();
+
     res.redirect("/");
   } catch (error) {
     res.status(400).send(`OAuth callback failed: ${error instanceof Error ? error.message : "Unknown error"}`);
   }
 });
 
-app.get("/auth/logout", (req, res) => {
-  req.session.googleTokens = null;
-  req.session.oauthState = null;
+app.get("/auth/callback", (req, res) => {
+  const query = new URLSearchParams(req.query).toString();
+  res.redirect(`/api/auth/callback/google${query ? `?${query}` : ""}`);
+});
+
+app.get("/auth/logout", async (req, res) => {
+  await req.destroyAuthSession();
   res.redirect("/");
+});
+
+app.get("/api/google/sites", async (req, res) => {
+  try {
+    if (!req.authSession?.userId) {
+      res.status(401).json({ error: "Connect Google first." });
+      return;
+    }
+
+    await getValidGoogleAccessToken({ userId: req.authSession.userId });
+    const sites = await loadSitesForSession(req);
+    res.json({ sites });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to load GSC sites." });
+  }
 });
 
 app.get("/", async (req, res) => {
@@ -285,13 +282,13 @@ app.get("/", async (req, res) => {
     res.type("html").send(
       renderHomePage({
         sites,
-        authenticated: Boolean(req.session.googleTokens),
+        authenticated: Boolean(req.authSession?.data?.googleConnectedAt),
       }),
     );
   } catch (error) {
     res.type("html").send(
       renderHomePage({
-        authenticated: Boolean(req.session.googleTokens),
+        authenticated: Boolean(req.authSession?.data?.googleConnectedAt),
         error: error instanceof Error ? error.message : "Failed to load sites.",
       }),
     );
@@ -301,10 +298,10 @@ app.get("/", async (req, res) => {
 app.post("/generate", async (req, res) => {
   try {
     const sourceType = req.body.sourceType || "gsc";
-    const authClient = getAuthorizedClient(req);
+    const authClient = await getAuthorizedClient(req);
 
     if (sourceType === "gsc" && !authClient && !req.body.gscKeyFile && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      throw new Error("Authenticate with Google first or provide service account key file.");
+      throw new Error("Connect Google first or provide service account key file.");
     }
     if (sourceType === "gsc" && !req.body.siteUrl) {
       throw new Error("Please select a GSC property before generating report.");
@@ -345,7 +342,7 @@ app.post("/generate", async (req, res) => {
     res.status(400).type("html").send(
       renderHomePage({
         sites,
-        authenticated: Boolean(req.session.googleTokens),
+        authenticated: Boolean(req.authSession?.data?.googleConnectedAt),
         error: error instanceof Error ? error.message : "Report generation failed.",
       }),
     );

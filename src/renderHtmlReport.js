@@ -7,6 +7,15 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function safeJsonForScript(value) {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 function formatNumber(value) {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 0,
@@ -450,7 +459,7 @@ export function renderHtmlReport({ insights, sourceInfo }) {
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
   <script>
-    const payload = ${JSON.stringify(chartPayload)};
+    const payload = ${safeJsonForScript(chartPayload)};
 
     const dailyCtx = document.getElementById("dailyChart");
     const monthlyCtx = document.getElementById("monthlyChart");
