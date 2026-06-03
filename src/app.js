@@ -5,24 +5,18 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import session from "express-session";
 import { google } from "googleapis";
-import { buildSeoInsights } from "./analytics.js";
-import { generateGeminiSeoInsights } from "./ai/geminiInsights.js";
-import { buildSeoAlerts, getSeoAlertConfig, hasHighSeverityAlerts, sendSeoAlertSummary } from "./alerts/seoAlerts.js";
-import { loadReportData } from "./dataLoader.js";
-import { renderHtmlReport } from "./renderHtmlReport.js";
-import { buildKeywordInsightsCsv } from "./exporters/csvExport.js";
 import { filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
+import { query as dbQuery } from "./db/client.js";
 import {
-  buildComparableRanges,
-  buildCtrOpportunities,
-  buildHighImpressionKeywordMovements,
-  buildKeywordWinners,
-  buildNearPageOneKeywords,
-  buildTrackedKeywordMovements,
-  parseTrackedKeywords,
-} from "./keywordAnalytics.js";
-import { parseDate } from "./lib/time.js";
-import { createReportJob, getReportJob, updateReportJob } from "./jobs/reportJobs.js";
+  completeReportJob,
+  createReportJob,
+  failReportJob,
+  getReportJob,
+  listRecentReportJobs,
+  markReportJobRunning,
+  updateReportJobProgress,
+} from "./db/reportJobs.js";
+import { generateReportFromInput } from "./services/reportGenerator.js";
 
 dotenv.config();
 
@@ -411,14 +405,6 @@ function isEmailAllowed(email) {
   return allowedEmails.has(normalizedEmail) || allowedDomains.has(domain);
 }
 
-function getMaxTrackedKeywords() {
-  return Number.isFinite(MAX_TRACKED_KEYWORDS) && MAX_TRACKED_KEYWORDS > 0 ? MAX_TRACKED_KEYWORDS : 100;
-}
-
-function limitTrackedKeywords(keywords) {
-  return keywords.slice(0, getMaxTrackedKeywords());
-}
-
 function renderInternalAccessDeniedPage() {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -438,15 +424,6 @@ function renderInternalAccessDeniedPage() {
 </html>`;
 }
 
-function countDaysInclusive(startDate, endDate) {
-  const start = parseDate(startDate);
-  const end = parseDate(endDate);
-  if (!start || !end || end.isBefore(start, "day")) {
-    return 30;
-  }
-  return end.diff(start, "day") + 1;
-}
-
 function findSitePermission(sites, siteUrl) {
   return sites.find((site) => site.siteUrl === siteUrl)?.permissionLevel || "";
 }
@@ -454,24 +431,6 @@ function findSitePermission(sites, siteUrl) {
 
 function isEmptyDataError(error) {
   return error?.code === "EMPTY_GSC_DATA";
-}
-
-function createEmptyGscDataError({ sourceInfo, input }) {
-  const range = sourceInfo?.range || { start: input.startDate || "—", end: input.endDate || "—" };
-  const filters = sourceInfo?.filters || {};
-  const diagnostics = sourceInfo?.diagnostics || {};
-  const error = new Error("No GSC data rows matched the selected filters.");
-  error.code = "EMPTY_GSC_DATA";
-  error.emptyDataContext = {
-    property: sourceInfo?.property || input.siteUrl || "—",
-    range,
-    searchType: diagnostics.searchType || filters.searchType || input.searchType || "web",
-    pageContains: filters.pageContains || input.pageContains || "",
-    pageContainsApplied: Boolean(diagnostics.pageContainsApplied),
-    pageRowCount: diagnostics.pageRowCount || 0,
-    keywordRowCount: diagnostics.keywordRowCount || 0,
-  };
-  return error;
 }
 
 function buildEmptyDataWarning(error, fallbackInput = {}) {
@@ -488,6 +447,21 @@ function buildEmptyDataWarning(error, fallbackInput = {}) {
     `Rows returned: page=${context.pageRowCount ?? 0}, keyword=${context.keywordRowCount ?? 0}`,
     "Next steps: confirm the selected GSC property has data for this period; try search type 'web'; widen the report period/custom date range; remove or loosen the Page contains filter; then generate the report again.",
   ].join("\n");
+}
+
+
+function redactSensitiveValue(message) {
+  let safeMessage = String(message || "");
+  for (const value of [process.env.DATABASE_URL, process.env.SUPABASE_SECRET_KEY, process.env.GOOGLE_CLIENT_SECRET, process.env.GEMINI_API_KEY]) {
+    if (value) {
+      safeMessage = safeMessage.split(value).join("[redacted]");
+    }
+  }
+  return safeMessage;
+}
+
+function safeErrorMessage(error, fallback = "An error occurred.") {
+  return redactSensitiveValue(error instanceof Error ? error.message : fallback);
 }
 
 function escapeHtml(value) {
@@ -857,7 +831,9 @@ function renderHomePage({ sites = [], authenticated = false, defaultValues = {},
           </div>
         </div>
         <div class="actions">
-          <button type="submit" id="generateButton" class="btn btn-primary" ${authenticated || defaultValues.sourceType === "looker" ? "" : "disabled"}>Generate HTML Report</button>
+          <button type="submit" id="generateButton" class="btn btn-primary" ${authenticated || defaultValues.sourceType === "looker" ? "" : "disabled"}>Create Report Job</button>
+          <button type="submit" formaction="/generate" formmethod="post" class="btn btn-ghost" ${authenticated || defaultValues.sourceType === "looker" ? "" : "disabled"}>Generate immediately legacy mode</button>
+          <a class="btn btn-ghost" href="/reports">Report history</a>
         </div>
       </form>
 
@@ -1025,8 +1001,19 @@ app.get("/auth/logout", (req, res) => {
   res.redirect("/");
 });
 
+app.get("/health/db", async (_req, res) => {
+  try {
+    await dbQuery("select 1 as ok");
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: safeErrorMessage(error, "Database health check failed."),
+    });
+  }
+});
+
 app.use(requireAllowedSessionUser);
-app.use("/reports", express.static(OUTPUT_DIR));
 
 app.get("/", async (req, res) => {
   const { sites, googleApiError } = await loadSitesResultForSession(req);
@@ -1128,150 +1115,39 @@ function rememberReportRequestInSession(sessionObject, body, { reportPeriod, pag
 
 async function generateReportFromBody({ body, authClient, sessionObject, onProgress = () => {} }) {
   const sourceType = validateReportRequest(body, authClient);
-  onProgress(8);
-
   const reportPeriod = body.reportPeriod || "30d";
   const pageContains = String(body.pageContains || "").trim();
   const trackedKeywordsInput = body.trackedKeywords || "";
-  const enableAiInsights = Boolean(body.enableAiInsights);
   const enableSeoAlerts = Boolean(body.enableSeoAlerts) || isEnvEnabled(process.env.SEO_ALERTS_ENABLED);
 
   rememberReportRequestInSession(sessionObject, body, { reportPeriod, pageContains, trackedKeywordsInput, enableSeoAlerts });
 
-  const input = {
-    sourceType,
-    siteUrl: body.siteUrl,
-    lookerCsvPath: body.lookerCsvPath,
-    contentCsvPath: body.contentCsvPath,
-    searchType: body.searchType,
-    reportPeriod,
-    pageContains,
-    startDate: body.startDate,
-    endDate: body.endDate,
-    gscKeyFile: body.gscKeyFile || process.env.GOOGLE_APPLICATION_CREDENTIALS,
+  const result = await generateReportFromInput({
+    input: { ...body, sourceType, reportPeriod, pageContains },
     authClient,
-  };
-
-  const { rows, keywordRows, contentRows, sourceInfo } = await loadReportData(input);
-  onProgress(38);
-  if (sourceType === "gsc" && rows.length === 0) {
-    throw createEmptyGscDataError({ sourceInfo, input });
-  }
-
-  const insights = buildSeoInsights({
-    rows,
-    contentRows,
-    endDate: sourceInfo.range?.end,
+    onProgress,
   });
-  onProgress(55);
 
-  const periodDays = countDaysInclusive(sourceInfo.range?.start, sourceInfo.range?.end);
-  const { currentRange, previousRange } = buildComparableRanges(sourceInfo.range?.end, periodDays);
-  currentRange.start = sourceInfo.range?.start || currentRange.start;
-  currentRange.end = sourceInfo.range?.end || currentRange.end;
-  const trackedKeywords = limitTrackedKeywords(parseTrackedKeywords(trackedKeywordsInput));
-  const trackedKeywordMovements = buildTrackedKeywordMovements({ keywordRows, trackedKeywords, currentRange, previousRange });
-  const highImpressionDrops = buildHighImpressionKeywordMovements({ keywordRows, currentRange, previousRange });
-  const nearPageOneKeywords = buildNearPageOneKeywords({ keywordRows, currentRange });
-  const keywordWinners = buildKeywordWinners({ keywordRows, currentRange, previousRange });
-  const ctrOpportunities = buildCtrOpportunities({ keywordRows, currentRange });
-  const seoAlerts = buildSeoAlerts({ highImpressionDrops, trackedKeywordMovements, ctrOpportunities });
-  onProgress(72);
-
-  if (enableSeoAlerts && hasHighSeverityAlerts(seoAlerts)) {
-    try {
-      await sendSeoAlertSummary({
-        alerts: seoAlerts,
-        sourceInfo,
-        config: getSeoAlertConfig(),
-      });
-    } catch (error) {
-      console.warn("Failed to send SEO alert summary.", error instanceof Error ? error.message : error);
-    }
-  }
-
-  const geminiInsights = enableAiInsights
-    ? await generateGeminiSeoInsights({
-        sourceInfo,
-        periodCards: insights.periodCards,
-        trackedKeywordMovements,
-        highImpressionDrops,
-        nearPageOneKeywords,
-        keywordWinners,
-        ctrOpportunities,
-        url6MonthInsights: insights.url6MonthInsights,
-      })
-    : { available: false, message: "AI insight not requested." };
-  onProgress(86);
-
-  const keywordInsights = {
-    trackedKeywords,
-    trackedKeywordMovements,
-    highImpressionDrops,
-    nearPageOneKeywords,
-    keywordWinners,
-    ctrOpportunities,
-    currentRange,
-    previousRange,
-    geminiInsights,
-  };
-  const keywordCsv = buildKeywordInsightsCsv(keywordInsights);
-  if (sessionObject) {
+  if (sessionObject && result.keywordCsv) {
     sessionObject.keywordCsvExport = {
-      csv: keywordCsv,
+      csv: result.keywordCsv,
       filename: `keyword-insights-${Date.now()}.csv`,
     };
   }
 
-  const reportHtml = renderHtmlReport({
-    insights,
-    sourceInfo: {
-      ...sourceInfo,
-      filters: {
-        ...(sourceInfo.filters || {}),
-        reportPeriod,
-        reportPeriodLabel: REPORT_PERIOD_LABELS[reportPeriod] || REPORT_PERIOD_LABELS.custom,
-        pageContains,
-        searchType: input.searchType || "web",
-        trackedKeywordCount: trackedKeywords.length,
-        trackedKeywordLimit: getMaxTrackedKeywords(),
-        seoAlertCount: seoAlerts.length,
-        highSeveritySeoAlertCount: seoAlerts.filter((alert) => alert.severity === "high").length,
-      },
-      diagnostics: {
-        ...(sourceInfo.diagnostics || {}),
-        pageRowCount: sourceInfo.diagnostics?.pageRowCount ?? rows.length,
-        keywordRowCount: sourceInfo.diagnostics?.keywordRowCount ?? keywordRows.length,
-      },
-    },
-    keywordInsights: {
-      trackedKeywords,
-      trackedKeywordMovements,
-      highImpressionDrops,
-      nearPageOneKeywords,
-      keywordWinners,
-      ctrOpportunities,
-      currentRange,
-      previousRange,
-      geminiInsights,
-      seoAlerts,
-    },
-  });
+  return result;
+}
 
-  try {
-    await fs.mkdir(OUTPUT_DIR, { recursive: true });
-    const outputPath = path.join(OUTPUT_DIR, `seo-report-${Date.now()}.html`);
-    await fs.writeFile(outputPath, reportHtml, "utf8");
-  } catch (_error) {
-    // Ignore write errors on serverless environments with ephemeral filesystem.
+function formatJobTimestamp(value) {
+  if (!value) {
+    return "—";
   }
-
-  onProgress(100);
-  return { reportHtml, keywordCsv };
+  return value instanceof Date ? value.toISOString() : String(value);
 }
 
 function renderReportStatusPage(job) {
   const isActive = ["queued", "running"].includes(job.status);
+  const progress = Number.isFinite(Number(job.progress)) ? Math.max(0, Math.min(100, Number(job.progress))) : 0;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1287,14 +1163,15 @@ function renderReportStatusPage(job) {
       <h1>Report status</h1>
       <p>Job <code>${escapeHtml(job.id)}</code></p>
       <p><span class="badge">${escapeHtml(job.status)}</span></p>
-      <div class="bar" aria-label="Progress"><span style="width:${escapeHtml(job.progress)}%"></span></div>
-      <p><strong>Progress:</strong> ${escapeHtml(job.progress)}%</p>
-      <p><strong>Created:</strong> ${escapeHtml(job.createdAt)}</p>
-      <p><strong>Updated:</strong> ${escapeHtml(job.updatedAt)}</p>
-      ${job.status === "failed" ? `<div class="error">${escapeHtml(job.error || "Report generation failed.")}</div>` : ""}
+      <div class="bar" aria-label="Progress"><span style="width:${escapeHtml(progress)}%"></span></div>
+      <p><strong>Progress:</strong> ${escapeHtml(progress)}%</p>
+      <p><strong>Created:</strong> ${escapeHtml(formatJobTimestamp(job.created_at))}</p>
+      <p><strong>Updated:</strong> ${escapeHtml(formatJobTimestamp(job.updated_at))}</p>
+      ${job.status === "failed" ? `<div class="error">${escapeHtml(job.error_message || "Report generation failed.")}</div>` : ""}
       <div class="actions">
         ${job.status === "completed" ? `<a class="btn" href="/reports/${encodeURIComponent(job.id)}/view">View completed report</a>` : ""}
         ${isActive ? '<span>Refreshing every 3 seconds…</span>' : ""}
+        <a class="btn secondary" href="/reports">Report history</a>
         <a class="btn secondary" href="/">Back to builder</a>
       </div>
     </section>
@@ -1303,26 +1180,43 @@ function renderReportStatusPage(job) {
 </html>`;
 }
 
-function startReportJob(job, { body, authClient, sessionObject }) {
-  setImmediate(() => {
-    updateReportJob(job.id, { status: "running", progress: 5 });
-    generateReportFromBody({
-      body,
-      authClient,
-      sessionObject,
-      onProgress: (progress) => updateReportJob(job.id, { progress, status: "running" }),
+function renderReportListPage(jobs) {
+  const rows = jobs
+    .map((job) => {
+      const href = job.status === "completed" ? `/reports/${encodeURIComponent(job.id)}/view` : `/reports/${encodeURIComponent(job.id)}/status`;
+      return `<tr><td>${escapeHtml(formatJobTimestamp(job.created_at))}</td><td>${escapeHtml(job.property_url || "—")}</td><td>${escapeHtml(job.search_type || "web")}</td><td>${escapeHtml(job.start_date || "—")} → ${escapeHtml(job.end_date || "—")}</td><td>${escapeHtml(job.status)}</td><td>${escapeHtml(job.progress)}%</td><td><a href="${href}">${job.status === "completed" ? "View" : "Status"}</a></td></tr>`;
     })
-      .then(({ reportHtml }) => {
-        updateReportJob(job.id, { status: "completed", progress: 100, resultHtml: reportHtml, error: null });
-      })
-      .catch((error) => {
-        const emptyData = isEmptyDataError(error);
-        updateReportJob(job.id, {
-          status: "failed",
-          progress: 100,
-          error: emptyData ? buildEmptyDataWarning(error, body) : error instanceof Error ? error.message : "Report generation failed.",
-        });
+    .join("");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Reports</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#edf3ea;color:#12232e;margin:0}.shell{width:min(1100px,94vw);margin:40px auto}.card{background:#fff;border:1px solid #d7dfdc;border-radius:14px;padding:22px;overflow:auto}.btn{display:inline-block;padding:10px 14px;border-radius:8px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:700}table{border-collapse:collapse;width:100%;margin-top:16px}th,td{border-bottom:1px solid #d7dfdc;padding:10px;text-align:left}th{font-size:.85rem;text-transform:uppercase;color:#53615c}</style></head>
+<body><main class="shell"><section class="card"><h1>Recent report jobs</h1><p><a class="btn" href="/">Create Report Job</a></p>${jobs.length ? `<table><thead><tr><th>Created</th><th>Property</th><th>Type</th><th>Date range</th><th>Status</th><th>Progress</th><th>Link</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No report jobs found for this signed-in user yet.</p>"}</section></main></body></html>`;
+}
+
+function safeReportJobError(error, body) {
+  if (isEmptyDataError(error)) {
+    return buildEmptyDataWarning(error, body);
+  }
+  return safeErrorMessage(error, "Report generation failed.");
+}
+
+function startReportJob(job, { body, authClient, sessionObject }) {
+  setImmediate(async () => {
+    try {
+      await markReportJobRunning(job.id);
+      const result = await generateReportFromBody({
+        body,
+        authClient,
+        sessionObject,
+        onProgress: (progress) => updateReportJobProgress(job.id, progress).catch((error) => console.warn("Failed to update report progress.", error instanceof Error ? error.message : error)),
       });
+      await completeReportJob(job.id, result);
+    } catch (error) {
+      await failReportJob(job.id, safeReportJobError(error, body)).catch((dbError) => {
+        console.error("Failed to mark report job failed.", dbError instanceof Error ? dbError.message : dbError);
+      });
+    }
   });
 }
 
@@ -1330,7 +1224,24 @@ app.post("/reports", async (req, res) => {
   try {
     const authClient = getAuthorizedClient(req);
     validateReportRequest(req.body, authClient);
-    const job = createReportJob();
+    const user = req.session?.user || {};
+    const job = await createReportJob({
+      userEmail: user.email || null,
+      userName: user.name || null,
+      propertyUrl: req.body.siteUrl || null,
+      searchType: req.body.searchType || "web",
+      reportPeriod: req.body.reportPeriod || "30d",
+      startDate: req.body.startDate || null,
+      endDate: req.body.endDate || null,
+      pageContains: req.body.pageContains || null,
+      trackedKeywords: req.body.trackedKeywords || "",
+      filters: {
+        sourceType: req.body.sourceType || "gsc",
+        reportPeriod: req.body.reportPeriod || "30d",
+        pageContains: String(req.body.pageContains || "").trim(),
+        searchType: req.body.searchType || "web",
+      },
+    });
     startReportJob(job, { body: { ...req.body }, authClient, sessionObject: req.session });
     res.redirect(`/reports/${encodeURIComponent(job.id)}/status`);
   } catch (error) {
@@ -1342,34 +1253,57 @@ app.post("/reports", async (req, res) => {
         authenticated: Boolean(getGoogleTokens(req)),
         presets: await listPresets().catch(() => []),
         defaultValues: req.body,
-        error: emptyData ? "" : error instanceof Error ? error.message : "Report generation failed.",
+        error: emptyData ? "" : safeErrorMessage(error, "Report generation failed."),
         warning: emptyData ? buildEmptyDataWarning(error, req.body) : "",
       }),
     );
   }
 });
 
-app.get("/reports/:id/status", (req, res) => {
-  const job = getReportJob(req.params.id);
-  if (!job) {
-    res.status(404).type("text").send("Report job not found. In-memory jobs may be lost on serverless cold starts.");
-    return;
+app.get("/reports", async (req, res) => {
+  try {
+    const jobs = await listRecentReportJobs({ userEmail: req.session?.user?.email || null, limit: 30 });
+    res.type("html").send(renderReportListPage(jobs));
+  } catch (error) {
+    res.status(500).type("html").send(`<p>${escapeHtml(safeErrorMessage(error, "Unable to load report history."))}</p><p><a href="/">Back to builder</a></p>`);
   }
-  res.type("html").send(renderReportStatusPage(job));
 });
 
-app.get("/reports/:id/view", (req, res) => {
-  const job = getReportJob(req.params.id);
-  if (!job) {
-    res.status(404).type("text").send("Report job not found. In-memory jobs may be lost on serverless cold starts.");
-    return;
+app.get("/reports/:id/status", async (req, res) => {
+  try {
+    const job = await getReportJob(req.params.id);
+    if (!job) {
+      res.status(404).type("text").send("Report job not found.");
+      return;
+    }
+    res.type("html").send(renderReportStatusPage(job));
+  } catch (error) {
+    res.status(500).type("text").send(safeErrorMessage(error, "Unable to load report job."));
   }
-  if (job.status !== "completed" || !job.resultHtml) {
-    res.redirect(`/reports/${encodeURIComponent(job.id)}/status`);
-    return;
-  }
-  res.type("html").send(job.resultHtml);
 });
+
+app.get("/reports/:id/view", async (req, res) => {
+  try {
+    const job = await getReportJob(req.params.id);
+    if (!job) {
+      res.status(404).type("text").send("Report job not found.");
+      return;
+    }
+    if (job.status === "failed") {
+      res.status(500).type("html").send(`<p>${escapeHtml(job.error_message || "Report generation failed.")}</p><p><a href="/reports/${encodeURIComponent(job.id)}/status">Back to status</a></p>`);
+      return;
+    }
+    if (job.status !== "completed" || !job.report_html) {
+      res.redirect(`/reports/${encodeURIComponent(job.id)}/status`);
+      return;
+    }
+    res.type("html").send(job.report_html);
+  } catch (error) {
+    res.status(500).type("text").send(safeErrorMessage(error, "Unable to load report job."));
+  }
+});
+
+app.use("/reports", express.static(OUTPUT_DIR));
 
 app.post("/generate", async (req, res) => {
   try {
@@ -1385,7 +1319,7 @@ app.post("/generate", async (req, res) => {
         authenticated: Boolean(getGoogleTokens(req)),
         presets: await listPresets().catch(() => []),
         defaultValues: req.body,
-        error: emptyData ? "" : error instanceof Error ? error.message : "Report generation failed.",
+        error: emptyData ? "" : safeErrorMessage(error, "Report generation failed."),
         warning: emptyData ? buildEmptyDataWarning(error, req.body) : "",
       }),
     );
