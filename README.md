@@ -81,6 +81,21 @@ SEO_ALERT_CTR_HIGH_IMPRESSIONS=1000
 
 `GEMINI_API_KEY` is optional. If it is not configured, times out, or fails, the report still renders and shows an AI-unavailable note. SEO alerts can be enabled from the report form or globally with `SEO_ALERTS_ENABLED=true`; notification delivery requires either `SLACK_WEBHOOK_URL` or `ALERT_EMAIL_PROVIDER_URL` plus `ALERT_EMAIL_TO`. The `/reports` async flow and legacy `/generate` fallback send a summary only when at least one high-severity alert exists, such as a position loss of at least 3 with at least 500 impressions or a tracked keyword with a large click loss.
 
+
+## Supabase Database Setup
+
+Use Supabase Postgres as the durable store for async report job status and completed report output. Do not commit or paste real credentials into this repository.
+
+1. Open `sql/001_create_report_jobs.sql` in this repo.
+2. In the Supabase dashboard, open the SQL Editor for your project and paste/run the full contents of `sql/001_create_report_jobs.sql`. The app does not run this migration automatically.
+3. In Vercel, set `DATABASE_URL` to the Supabase Postgres connection string. For Vercel serverless deployments, use the Supabase Transaction Pooler connection string rather than a direct connection string.
+4. If you also use Supabase APIs later, set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in Vercel as server-side environment variables only. Do not expose these values to frontend code.
+5. Redeploy the Express/Vercel app after setting environment variables.
+6. Test database connectivity with `/health/db`; a configured database should return `{ "ok": true }`.
+7. Create reports from the homepage and use `/reports` to view recent report history for the signed-in Google user.
+
+If `DATABASE_URL` is missing, unrelated pages such as the homepage still load. Database-backed routes return a clear configuration error until the environment variable is set.
+
 ## Local Test Instructions
 
 Install dependencies:
@@ -118,7 +133,7 @@ To test the GSC reporting flow locally after OAuth environment variables are pre
 8. Optionally enter tracked keywords, one per line or separated by commas.
 9. Optionally enable Gemini AI insights if `GEMINI_API_KEY` is configured.
 10. Optionally enable SEO alerts after configuring Slack or email alert environment variables.
-11. Submit **Generate HTML Report**. The form posts to `POST /reports`, creates an in-memory job, and redirects immediately to `/reports/:id/status`.
+11. Submit **Create Report Job**. The form posts to `POST /reports`, creates a durable Supabase Postgres job, and redirects immediately to `/reports/:id/status`.
 12. Wait for the auto-refreshing status page to show `completed`, then open `/reports/:id/view`.
 
 ## Report Sections
@@ -154,7 +169,7 @@ Output files are written to `output/` in local environments.
 ## Notes
 
 - This project remains an Express + Vercel serverless app for the SEO Reporter flow.
-- Report jobs and report caching are currently in memory so the app works locally and avoids blocking the initial request. This is not durable on Vercel serverless: cold starts, scale-out, and deployments can lose queued jobs/results/cache entries. Use Redis or Postgres for durable jobs, cache, and session/token storage before serious production use.
+- Report jobs and completed report HTML/JSON are stored in Supabase Postgres through `DATABASE_URL`; report cache and session/token storage are still separate concerns.
 - `POST /reports` is the preferred async report-generation route. `POST /generate` remains as a synchronous fallback for compatibility.
 - `api/index.js` continues to export the Express app for serverless usage.
 - `vercel.json` rewrites requests to the Express function, including `/`, `/auth/*`, and existing `/api/google/*` OAuth paths.
