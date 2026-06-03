@@ -149,7 +149,7 @@ async function loadOptionalContentRows(contentCsvPath, { optional = false } = {}
     if (optional && isFileNotFoundError(error)) {
       return {
         rows: [],
-        warning: `Content metadata CSV not found at ${trimmedPath}; publishing section will be empty.`,
+        warning: `Content metadata CSV not found at ${trimmedPath}; report continues with GSC-only content opportunities.`,
       };
     }
     throw error;
@@ -206,15 +206,16 @@ export async function loadReportData({
     const range = resolveGscRange({ startDate, endDate, reportPeriod });
 
     const comparisonRange = previousRangeFor(range);
-    const keywordFetchRange = {
+    const fetchRange = {
       start: comparisonRange.start,
       end: range.end,
     };
+    const keywordFetchRange = fetchRange;
 
     rows = await fetchGscRows({
       siteUrl,
-      startDate: range.start,
-      endDate: range.end,
+      startDate: fetchRange.start,
+      endDate: fetchRange.end,
       searchType: normalizedSearchType,
       keyFile: gscKeyFile,
       authClient,
@@ -247,7 +248,9 @@ export async function loadReportData({
         keywordRowCount: keywordRows.length,
         pageContainsApplied: Boolean(trimmedPageContains),
         searchType: normalizedSearchType,
-        queryRange: range,
+        queryRange: fetchRange,
+        selectedRange: range,
+        comparisonRange,
         keywordFetchRange,
         gscDataDelayDays: getGscDataDelayDays(),
       },
@@ -261,9 +264,11 @@ export async function loadReportData({
     rows = await loadLookerRowsOrThrow(absoluteLookerPath);
     const span = findDateSpan(rows);
 
-    if (startDate || endDate) {
+    if (startDate || endDate || reportPeriod) {
       const range = resolveRange({ startDate: startDate || span?.start, endDate: endDate || span?.end, reportPeriod });
-      rows = rows.filter((row) => row.date >= range.start && row.date <= range.end);
+      const comparisonRange = previousRangeFor(range);
+      const fetchRange = { start: comparisonRange.start, end: range.end };
+      rows = rows.filter((row) => row.date >= fetchRange.start && row.date <= fetchRange.end);
       sourceInfo = {
         label: "Looker CSV Export",
         property: absoluteLookerPath,
@@ -272,6 +277,11 @@ export async function loadReportData({
           reportPeriod: reportPeriod || "custom",
           pageContains: trimmedPageContains,
           searchType: normalizedSearchType,
+        },
+        diagnostics: {
+          queryRange: fetchRange,
+          selectedRange: range,
+          comparisonRange,
         },
       };
     } else {

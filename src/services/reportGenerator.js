@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { buildSeoInsights } from "../analytics.js";
 import { generateGeminiSeoInsights } from "../ai/geminiInsights.js";
-import { buildSeoAlerts, getSeoAlertConfig, hasHighSeverityAlerts, sendSeoAlertSummary } from "../alerts/seoAlerts.js";
 import { loadReportData } from "../dataLoader.js";
 import { buildKeywordInsightsCsv } from "../exporters/csvExport.js";
 import {
@@ -109,7 +108,6 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
   const pageContains = String(rawInput.pageContains || "").trim();
   const trackedKeywordsInput = rawInput.trackedKeywords || "";
   const enableAiInsights = Boolean(rawInput.enableAiInsights);
-  const enableSeoAlerts = Boolean(rawInput.enableSeoAlerts) || isEnvEnabled(process.env.SEO_ALERTS_ENABLED);
 
   const input = {
     sourceType,
@@ -125,7 +123,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
     authClient,
   };
 
-  const { rows, keywordRows, contentRows, sourceInfo } = await loadReportData(input);
+  const { rows, keywordRows, sourceInfo } = await loadReportData(input);
   onProgress(30);
   if (sourceType === "gsc" && rows.length === 0) {
     throw createEmptyGscDataError({ sourceInfo, input });
@@ -133,8 +131,8 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
 
   const insights = buildSeoInsights({
     rows,
-    contentRows,
     endDate: sourceInfo.range?.end,
+    currentRange: sourceInfo.range,
   });
 
   const periodDays = countDaysInclusive(sourceInfo.range?.start, sourceInfo.range?.end);
@@ -147,31 +145,31 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
   const nearPageOneKeywords = buildNearPageOneKeywords({ keywordRows, currentRange });
   const keywordWinners = buildKeywordWinners({ keywordRows, currentRange, previousRange });
   const ctrOpportunities = buildCtrOpportunities({ keywordRows, currentRange });
-  const seoAlerts = buildSeoAlerts({ highImpressionDrops, trackedKeywordMovements, ctrOpportunities });
   onProgress(60);
 
-  if (enableSeoAlerts && hasHighSeverityAlerts(seoAlerts)) {
-    try {
-      await sendSeoAlertSummary({
-        alerts: seoAlerts,
-        sourceInfo,
-        config: getSeoAlertConfig(),
-      });
-    } catch (error) {
-      console.warn("Failed to send SEO alert summary.", error instanceof Error ? error.message : error);
-    }
-  }
+  const reportTablesForAI = {
+    last30Contribution: insights.last30Contribution,
+    topUrlsByClicks: insights.performance3MonthComparison.outstandingUrls.topByClicks,
+    topUrlsByImpressions: insights.performance3MonthComparison.outstandingUrls.topByImpressions,
+    fastestGrowingUrls: insights.performance3MonthComparison.outstandingUrls.fastestGrowing,
+    fastestDecliningUrls: insights.performance3MonthComparison.outstandingUrls.fastestDeclining,
+  };
 
   const aiInsights = enableAiInsights
     ? await generateGeminiSeoInsights({
         sourceInfo,
-        periodCards: insights.periodCards,
-        trackedKeywordMovements,
-        highImpressionDrops,
-        nearPageOneKeywords,
-        keywordWinners,
+        selectedPeriodOverview: insights.selectedPeriodOverview,
+        performance3MonthComparison: insights.performance3MonthComparison,
+        contentOpportunitySnapshot: insights.contentOpportunitySnapshot,
+        urlMovement30Days: insights.urlMovement30Days,
+        keywordMovements: {
+          trackedKeywordMovements,
+          highImpressionDrops,
+          keywordWinners,
+        },
         ctrOpportunities,
-        url6MonthInsights: insights.url6MonthInsights,
+        nearPageOneKeywords,
+        reportTablesForAI,
       })
     : { available: false, message: "AI insight not requested." };
 
@@ -183,8 +181,6 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
     searchType: input.searchType || "web",
     trackedKeywordCount: trackedKeywords.length,
     trackedKeywordLimit: getMaxTrackedKeywords(),
-    seoAlertCount: seoAlerts.length,
-    highSeveritySeoAlertCount: seoAlerts.filter((alert) => alert.severity === "high").length,
   };
 
   const enrichedSourceInfo = {
@@ -207,7 +203,6 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
     currentRange,
     previousRange,
     geminiInsights: aiInsights,
-    seoAlerts,
   };
 
   const keywordCsv = buildKeywordInsightsCsv(keywordInsights);

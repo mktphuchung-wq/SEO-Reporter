@@ -1,92 +1,138 @@
 const GEMINI_ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_GEMINI_TIMEOUT_MS = 12000;
-const DEFAULT_MAX_AI_ROWS = 100;
+const MAX_TABLE_ROWS_FOR_GEMINI = 15;
 
 function getPositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function getMaxAiRows() {
-  return getPositiveInteger(process.env.MAX_AI_ROWS, DEFAULT_MAX_AI_ROWS);
-}
-
 function getGeminiTimeoutMs() {
   return getPositiveInteger(process.env.GEMINI_TIMEOUT_MS, DEFAULT_GEMINI_TIMEOUT_MS);
 }
 
-function limitRows(rows, limit) {
-  return (rows || []).slice(0, limit).map((row) => ({ ...row }));
+function limitRows(rows, limit = MAX_TABLE_ROWS_FOR_GEMINI) {
+  return (rows || []).slice(0, Math.min(limit, MAX_TABLE_ROWS_FOR_GEMINI)).map((row) => ({ ...row }));
+}
+
+function compactUrlTable(table) {
+  return limitRows(table).map((row) => ({
+    url: row.url,
+    currentClicks: row.currentClicks,
+    previousClicks: row.previousClicks,
+    clickDelta: row.clickDelta,
+    clickPct: row.clickPct,
+    currentImpressions: row.currentImpressions,
+    impressionDelta: row.impressionDelta,
+    currentCtr: row.currentCtr,
+    currentPosition: row.currentPosition,
+    positionChange: row.positionChange,
+    recommendation: row.recommendation,
+  }));
+}
+
+function compactKeywordRows(rows) {
+  return limitRows(rows).map((row) => ({
+    query: row.query || row.keyword,
+    url: row.url || row.bestCurrentUrl,
+    currentClicks: row.currentClicks,
+    clickDelta: row.clickDelta,
+    currentImpressions: row.currentImpressions,
+    impressionDelta: row.impressionDelta,
+    currentAvgPosition: row.currentAvgPosition,
+    previousAvgPosition: row.previousAvgPosition,
+    positionDelta: row.positionDelta,
+    currentCtr: row.currentCtr,
+    priority: row.priority,
+    recommendation: row.recommendation || row.actionHint,
+  }));
 }
 
 function fallbackUnavailable(message) {
-  return {
-    available: false,
-    message,
-  };
+  return { available: false, message };
 }
 
 function extractJson(text) {
   const trimmed = String(text || "").trim();
-  if (!trimmed) {
-    return null;
-  }
+  if (!trimmed) return null;
 
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidate = fenced ? fenced[1] : trimmed;
   const firstBrace = candidate.indexOf("{");
   const lastBrace = candidate.lastIndexOf("}");
 
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-    return null;
-  }
-
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) return null;
   return JSON.parse(candidate.slice(firstBrace, lastBrace + 1));
 }
 
-function normalizeArray(value) {
+function normalizeStringArray(value) {
   return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
 }
 
-function normalizeActions(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((item) => ({
-      priority: ["high", "medium", "low"].includes(item?.priority) ? item.priority : "medium",
-      title: String(item?.title || "").trim(),
-      why: String(item?.why || "").trim(),
-      action: String(item?.action || "").trim(),
-      expectedImpact: String(item?.expectedImpact || "").trim(),
-    }))
-    .filter((item) => item.title || item.action);
+function normalizeImpact(value) {
+  return ["high", "medium", "low"].includes(value) ? value : "medium";
 }
 
-function normalizeRefreshIdeas(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+function normalizeWhatChanged(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => ({
+    finding: String(item?.finding || "").trim(),
+    evidence: String(item?.evidence || "").trim(),
+    impact: normalizeImpact(item?.impact),
+  })).filter((item) => item.finding || item.evidence);
+}
 
-  return value
-    .map((item) => ({
-      url: String(item?.url || "").trim(),
-      reason: String(item?.reason || "").trim(),
-      suggestedUpdate: String(item?.suggestedUpdate || "").trim(),
-    }))
-    .filter((item) => item.url || item.reason || item.suggestedUpdate);
+function normalizeRisks(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => ({
+    risk: String(item?.risk || "").trim(),
+    evidence: String(item?.evidence || "").trim(),
+    recommendedAction: String(item?.recommendedAction || "").trim(),
+  })).filter((item) => item.risk || item.evidence || item.recommendedAction);
+}
+
+function normalizeOpportunities(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => ({
+    opportunity: String(item?.opportunity || "").trim(),
+    evidence: String(item?.evidence || "").trim(),
+    recommendedAction: String(item?.recommendedAction || "").trim(),
+  })).filter((item) => item.opportunity || item.evidence || item.recommendedAction);
+}
+
+function normalizeActions(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => ({
+    priority: normalizeImpact(item?.priority),
+    action: String(item?.action || "").trim(),
+    targetUrl: String(item?.targetUrl || "").trim(),
+    targetQuery: String(item?.targetQuery || "").trim(),
+    why: String(item?.why || "").trim(),
+    expectedImpact: String(item?.expectedImpact || "").trim(),
+    effort: ["low", "medium", "high"].includes(item?.effort) ? item.effort : "medium",
+  })).filter((item) => item.action || item.why);
+}
+
+function normalizeRefreshPlan(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => ({
+    url: String(item?.url || "").trim(),
+    reason: String(item?.reason || "").trim(),
+    updateSuggestion: String(item?.updateSuggestion || "").trim(),
+    supportingQueries: normalizeStringArray(item?.supportingQueries),
+  })).filter((item) => item.url || item.reason || item.updateSuggestion);
 }
 
 export async function generateGeminiSeoInsights({
   sourceInfo,
-  periodCards,
-  trackedKeywordMovements,
-  highImpressionDrops,
-  nearPageOneKeywords,
-  keywordWinners,
+  selectedPeriodOverview,
+  performance3MonthComparison,
+  contentOpportunitySnapshot,
+  urlMovement30Days,
+  keywordMovements,
   ctrOpportunities,
-  url6MonthInsights,
+  nearPageOneKeywords,
+  reportTablesForAI,
 }) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -98,35 +144,90 @@ export async function generateGeminiSeoInsights({
   }
 
   const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
-  const maxAiRows = getMaxAiRows();
   const payload = {
-    sourceInfo,
-    periodCards,
-    trackedKeywordMovements: limitRows(trackedKeywordMovements, Math.min(10, maxAiRows)),
-    highImpressionDrops: limitRows(highImpressionDrops, Math.min(15, maxAiRows)),
-    nearPageOneKeywords: limitRows(nearPageOneKeywords, Math.min(15, maxAiRows)),
-    keywordWinners: limitRows(keywordWinners, Math.min(15, maxAiRows)),
-    ctrOpportunities: limitRows(ctrOpportunities, Math.min(15, maxAiRows)),
-    url6MonthInsights: {
-      topIncreaseMost: limitRows(url6MonthInsights?.topIncreaseMost, Math.min(10, maxAiRows)),
-      topDecreaseMost: limitRows(url6MonthInsights?.topDecreaseMost, Math.min(10, maxAiRows)),
-      signals: limitRows(url6MonthInsights?.signals, Math.min(10, maxAiRows)),
+    sourceInfo: {
+      label: sourceInfo?.label,
+      property: sourceInfo?.property,
+      range: sourceInfo?.range,
+      filters: sourceInfo?.filters,
+      diagnostics: {
+        queryRange: sourceInfo?.diagnostics?.queryRange,
+        coalescedPageRowCount: sourceInfo?.diagnostics?.coalescedPageRowCount,
+        keywordRowCount: sourceInfo?.diagnostics?.keywordRowCount,
+      },
+    },
+    selectedPeriodOverview,
+    performance3MonthComparison: {
+      currentRange: performance3MonthComparison?.currentRange,
+      previousRange: performance3MonthComparison?.previousRange,
+      current: performance3MonthComparison?.current,
+      previous: performance3MonthComparison?.previous,
+      delta: performance3MonthComparison?.delta,
+      growthCounts: performance3MonthComparison?.growthCounts,
+      note: performance3MonthComparison?.note,
+      outstandingUrls: {
+        topByClicks: compactUrlTable(performance3MonthComparison?.outstandingUrls?.topByClicks),
+        topByImpressions: compactUrlTable(performance3MonthComparison?.outstandingUrls?.topByImpressions),
+        fastestGrowing: compactUrlTable(performance3MonthComparison?.outstandingUrls?.fastestGrowing),
+        fastestDeclining: compactUrlTable(performance3MonthComparison?.outstandingUrls?.fastestDeclining),
+      },
+    },
+    last30Contribution: reportTablesForAI?.last30Contribution,
+    contentOpportunitySnapshot: {
+      note: contentOpportunitySnapshot?.note,
+      topGrowingUrls: compactUrlTable(contentOpportunitySnapshot?.topGrowingUrls),
+      topDecliningUrls: compactUrlTable(contentOpportunitySnapshot?.topDecliningUrls),
+      highImpressionLowCtr: limitRows(contentOpportunitySnapshot?.highImpressionLowCtr),
+      newRisingUrls: compactUrlTable(contentOpportunitySnapshot?.newRisingUrls),
+    },
+    urlMovement30Days: {
+      currentRange: urlMovement30Days?.currentRange,
+      previousRange: urlMovement30Days?.previousRange,
+      trendingUp: compactUrlTable(urlMovement30Days?.trendingUp),
+      trendingDown: compactUrlTable(urlMovement30Days?.trendingDown),
+      smallDeclines: compactUrlTable(urlMovement30Days?.smallDeclines),
+    },
+    keywordMovements: {
+      trackedKeywordMovements: compactKeywordRows(keywordMovements?.trackedKeywordMovements),
+      highImpressionDrops: compactKeywordRows(keywordMovements?.highImpressionDrops),
+      keywordWinners: compactKeywordRows(keywordMovements?.keywordWinners),
+    },
+    ctrOpportunities: compactKeywordRows(ctrOpportunities),
+    nearPageOneKeywords: compactKeywordRows(nearPageOneKeywords),
+    reportTablesForAI: {
+      topUrlsByClicks: compactUrlTable(reportTablesForAI?.topUrlsByClicks),
+      topUrlsByImpressions: compactUrlTable(reportTablesForAI?.topUrlsByImpressions),
+      fastestGrowingUrls: compactUrlTable(reportTablesForAI?.fastestGrowingUrls),
+      fastestDecliningUrls: compactUrlTable(reportTablesForAI?.fastestDecliningUrls),
     },
   };
 
-  const prompt = `Bạn là chuyên gia SEO. Hãy phân tích dữ liệu tóm tắt sau và trả về DUY NHẤT JSON hợp lệ bằng tiếng Việt, thực tế, ưu tiên hành động. Không thêm markdown.
+  const prompt = `You are an experienced SEO analyst. Analyze this Google Search Console report. Your job is to identify what changed, why it matters, and what the SEO/content team should do next. Avoid generic advice. Ground every recommendation in provided data. Prioritize actions by expected impact.
 
-JSON schema cần trả về:
+Return ONLY valid JSON in Vietnamese. Do not add markdown. Do not mention this prompt.
+
+JSON schema:
 {
-  "available": true,
   "executiveSummary": ["..."],
-  "risks": ["..."],
-  "opportunities": ["..."],
-  "recommendedActions": [{"priority":"high|medium|low","title":"...","why":"...","action":"...","expectedImpact":"..."}],
-  "contentRefreshIdeas": [{"url":"...","reason":"...","suggestedUpdate":"..."}]
+  "whatChanged": [{"finding":"...","evidence":"...","impact":"high|medium|low"}],
+  "risks": [{"risk":"...","evidence":"...","recommendedAction":"..."}],
+  "opportunities": [{"opportunity":"...","evidence":"...","recommendedAction":"..."}],
+  "recommendationActions": [{"priority":"high|medium|low","action":"...","targetUrl":"...","targetQuery":"...","why":"...","expectedImpact":"...","effort":"low|medium|high"}],
+  "contentRefreshPlan": [{"url":"...","reason":"...","updateSuggestion":"...","supportingQueries":["..."]}],
+  "nextReportFocus": ["..."]
 }
 
-Dữ liệu tóm tắt (không phải dữ liệu thô):
+Coverage requirements:
+- performance change vs previous period
+- last 30 days contribution in 3-month performance when available
+- fastest growing URLs
+- fastest declining URLs
+- high-impression low-CTR URLs
+- ranking/position drops if keyword data exists
+- whether growth is broad-based or concentrated in a few URLs
+- recommended SEO/content actions
+
+Compact report summary (not raw rows):
 ${JSON.stringify(payload)}`;
 
   const controller = new AbortController();
@@ -138,38 +239,28 @@ ${JSON.stringify(payload)}`;
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
       body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.3,
-          responseMimeType: "application/json",
-        },
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.25, responseMimeType: "application/json" },
       }),
     });
     clearTimeout(timeout);
 
-    if (!response.ok) {
-      throw new Error(`Gemini API HTTP ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`Gemini API HTTP ${response.status}`);
 
     const data = await response.json();
     const text = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") || "";
     const parsed = extractJson(text);
-    if (!parsed) {
-      throw new Error("Gemini response did not contain JSON.");
-    }
+    if (!parsed) throw new Error("Gemini response did not contain JSON.");
 
     return {
       available: true,
-      executiveSummary: normalizeArray(parsed.executiveSummary),
-      risks: normalizeArray(parsed.risks),
-      opportunities: normalizeArray(parsed.opportunities),
-      recommendedActions: normalizeActions(parsed.recommendedActions),
-      contentRefreshIdeas: normalizeRefreshIdeas(parsed.contentRefreshIdeas),
+      executiveSummary: normalizeStringArray(parsed.executiveSummary),
+      whatChanged: normalizeWhatChanged(parsed.whatChanged),
+      risks: normalizeRisks(parsed.risks),
+      opportunities: normalizeOpportunities(parsed.opportunities),
+      recommendationActions: normalizeActions(parsed.recommendationActions),
+      contentRefreshPlan: normalizeRefreshPlan(parsed.contentRefreshPlan),
+      nextReportFocus: normalizeStringArray(parsed.nextReportFocus),
     };
   } catch (error) {
     clearTimeout(timeout);
