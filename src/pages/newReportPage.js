@@ -1,5 +1,6 @@
 import { renderLayout } from "../ui/layout.js";
-import { escapeHtml, renderAlert, renderEmptyState, renderHelpBox } from "../ui/components.js";
+import { escapeHtml } from "../ui/html.js";
+import { renderAlert, renderEmptyState, renderHelpBox } from "../ui/components.js";
 import { checked, renderFieldHelper, selected } from "../ui/forms.js";
 
 function option(value, label, current) {

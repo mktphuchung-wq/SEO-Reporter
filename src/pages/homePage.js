@@ -1,5 +1,6 @@
 import { renderLayout } from "../ui/layout.js";
-import { escapeHtml, renderAlert, renderEmptyState, renderMetricCard, renderStatusBadge } from "../ui/components.js";
+import { escapeHtml } from "../ui/html.js";
+import { renderAlert, renderEmptyState, renderMetricCard, renderStatusBadge } from "../ui/components.js";
 import { renderTable } from "../ui/tables.js";
 
 function findSitePermission(sites, siteUrl) {

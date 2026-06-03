@@ -1,4 +1,4 @@
-import { escapeHtml } from "./components.js";
+import { escapeHtml } from "./html.js";
 
 export function selected(value, expected) {
   return value === expected ? "selected" : "";
