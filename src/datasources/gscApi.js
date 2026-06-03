@@ -1,8 +1,30 @@
 import { google } from "googleapis";
 import path from "node:path";
+import { getCache, setCache } from "../cache/reportCache.js";
+import { splitDateRangeIntoMonthlyChunks } from "../lib/dateChunks.js";
 
 const GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 export const MAX_ROW_LIMIT = 25000;
+const GSC_CACHE_TTL_SECONDS = Number.parseInt(process.env.GSC_CACHE_TTL_SECONDS || "300", 10);
+const GSC_KEYWORD_CHUNK_MIN_DAYS = Number.parseInt(process.env.GSC_KEYWORD_CHUNK_MIN_DAYS || "45", 10);
+
+function getCacheTtlSeconds() {
+  return Number.isFinite(GSC_CACHE_TTL_SECONDS) && GSC_CACHE_TTL_SECONDS > 0 ? GSC_CACHE_TTL_SECONDS : 300;
+}
+
+function buildGscCacheKey({ siteUrl, startDate, endDate, searchType, dimensions, pageContains }) {
+  return JSON.stringify({ source: "gsc", siteUrl, startDate, endDate, searchType, dimensions, pageContains: pageContains || "" });
+}
+
+function shouldChunkRange(startDate, endDate) {
+  const start = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    return false;
+  }
+  const days = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+  return days >= (Number.isFinite(GSC_KEYWORD_CHUNK_MIN_DAYS) ? GSC_KEYWORD_CHUNK_MIN_DAYS : 45);
+}
 
 function normalizePageRow(row) {
   const keys = row.keys || [];
@@ -88,6 +110,12 @@ async function fetchSearchAnalyticsRows({
   pageContains,
   normalizer,
 }) {
+  const cacheKey = buildGscCacheKey({ siteUrl, startDate, endDate, searchType, dimensions, pageContains });
+  const cachedRows = getCache(cacheKey);
+  if (cachedRows) {
+    return cachedRows.map((row) => ({ ...row }));
+  }
+
   const webmasters = google.webmasters({ version: "v3", auth });
   const allRows = [];
   let startRow = 0;
@@ -115,6 +143,7 @@ async function fetchSearchAnalyticsRows({
     startRow += MAX_ROW_LIMIT;
   }
 
+  setCache(cacheKey, allRows.map((row) => ({ ...row })), getCacheTtlSeconds());
   return allRows;
 }
 
@@ -194,6 +223,30 @@ export async function fetchGscKeywordRows({
   authClient,
   pageContains,
 }) {
+  const dimensions = ["date", "query", "page"];
+  if (shouldChunkRange(startDate, endDate)) {
+    const chunks = splitDateRangeIntoMonthlyChunks(startDate, endDate);
+    if (chunks.length > 1) {
+      const chunkRows = [];
+      for (const chunk of chunks) {
+        chunkRows.push(
+          ...(await fetchWithOptionalPageFilter({
+            siteUrl,
+            startDate: chunk.start,
+            endDate: chunk.end,
+            searchType,
+            keyFile,
+            authClient,
+            pageContains,
+            dimensions,
+            normalizer: normalizeKeywordRow,
+          })),
+        );
+      }
+      return chunkRows;
+    }
+  }
+
   return fetchWithOptionalPageFilter({
     siteUrl,
     startDate,
@@ -202,7 +255,7 @@ export async function fetchGscKeywordRows({
     keyFile,
     authClient,
     pageContains,
-    dimensions: ["date", "query", "page"],
+    dimensions,
     normalizer: normalizeKeywordRow,
   });
 }

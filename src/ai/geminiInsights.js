@@ -1,4 +1,19 @@
 const GEMINI_ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+const DEFAULT_GEMINI_TIMEOUT_MS = 12000;
+const DEFAULT_MAX_AI_ROWS = 100;
+
+function getPositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getMaxAiRows() {
+  return getPositiveInteger(process.env.MAX_AI_ROWS, DEFAULT_MAX_AI_ROWS);
+}
+
+function getGeminiTimeoutMs() {
+  return getPositiveInteger(process.env.GEMINI_TIMEOUT_MS, DEFAULT_GEMINI_TIMEOUT_MS);
+}
 
 function limitRows(rows, limit) {
   return (rows || []).slice(0, limit).map((row) => ({ ...row }));
@@ -83,18 +98,19 @@ export async function generateGeminiSeoInsights({
   }
 
   const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  const maxAiRows = getMaxAiRows();
   const payload = {
     sourceInfo,
     periodCards,
-    trackedKeywordMovements: limitRows(trackedKeywordMovements, 10),
-    highImpressionDrops: limitRows(highImpressionDrops, 15),
-    nearPageOneKeywords: limitRows(nearPageOneKeywords, 15),
-    keywordWinners: limitRows(keywordWinners, 15),
-    ctrOpportunities: limitRows(ctrOpportunities, 15),
+    trackedKeywordMovements: limitRows(trackedKeywordMovements, Math.min(10, maxAiRows)),
+    highImpressionDrops: limitRows(highImpressionDrops, Math.min(15, maxAiRows)),
+    nearPageOneKeywords: limitRows(nearPageOneKeywords, Math.min(15, maxAiRows)),
+    keywordWinners: limitRows(keywordWinners, Math.min(15, maxAiRows)),
+    ctrOpportunities: limitRows(ctrOpportunities, Math.min(15, maxAiRows)),
     url6MonthInsights: {
-      topIncreaseMost: limitRows(url6MonthInsights?.topIncreaseMost, 10),
-      topDecreaseMost: limitRows(url6MonthInsights?.topDecreaseMost, 10),
-      signals: limitRows(url6MonthInsights?.signals, 10),
+      topIncreaseMost: limitRows(url6MonthInsights?.topIncreaseMost, Math.min(10, maxAiRows)),
+      topDecreaseMost: limitRows(url6MonthInsights?.topDecreaseMost, Math.min(10, maxAiRows)),
+      signals: limitRows(url6MonthInsights?.signals, Math.min(10, maxAiRows)),
     },
   };
 
@@ -113,10 +129,14 @@ JSON schema cần trả về:
 Dữ liệu tóm tắt (không phải dữ liệu thô):
 ${JSON.stringify(payload)}`;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), getGeminiTimeoutMs());
+
   try {
     const response = await fetch(`${GEMINI_ENDPOINT_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
       body: JSON.stringify({
         contents: [
           {
@@ -130,6 +150,7 @@ ${JSON.stringify(payload)}`;
         },
       }),
     });
+    clearTimeout(timeout);
 
     if (!response.ok) {
       throw new Error(`Gemini API HTTP ${response.status}`);
@@ -150,7 +171,11 @@ ${JSON.stringify(payload)}`;
       recommendedActions: normalizeActions(parsed.recommendedActions),
       contentRefreshIdeas: normalizeRefreshIdeas(parsed.contentRefreshIdeas),
     };
-  } catch (_error) {
+  } catch (error) {
+    clearTimeout(timeout);
+    if (error?.name === "AbortError") {
+      return fallbackUnavailable("Gemini AI insight timed out, but the SEO report was generated.");
+    }
     return fallbackUnavailable("Gemini AI insight failed, but the SEO report was generated.");
   }
 }
