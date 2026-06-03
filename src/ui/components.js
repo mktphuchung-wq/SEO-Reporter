@@ -1,6 +1,4 @@
 import { escapeHtml } from "./html.js";
-export { escapeHtml } from "./html.js";
-
 const STATUS_TONES = {
   connected: "green",
   completed: "green",

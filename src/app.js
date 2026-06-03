@@ -700,10 +700,6 @@ app.get("/reports/new", async (req, res) => {
   );
 });
 
-app.get("/reports", (req, res) => {
-  res.type("html").send(renderReportsPage({ authenticated: Boolean(getGoogleTokens(req)), user: req.session.user }));
-});
-
 function buildEnvHealth() {
   return {
     GOOGLE_CLIENT_ID: Boolean(process.env.GOOGLE_CLIENT_ID),
@@ -842,6 +838,9 @@ function getReportStatusTone(status) {
 function renderReportStatusPage(job) {
   const isActive = ["queued", "running"].includes(job.status);
   const statusTone = getReportStatusTone(job.status);
+  const createdAt = job.created_at || job.createdAt;
+  const updatedAt = job.updated_at || job.updatedAt;
+  const errorMessage = job.error_message || job.error;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -859,9 +858,9 @@ function renderReportStatusPage(job) {
       <p><span class="badge ${escapeHtml(statusTone)}">${escapeHtml(job.status)}</span></p>
       <div class="bar" aria-label="Progress"><span style="width:${escapeHtml(job.progress)}%"></span></div>
       <p><strong>Progress:</strong> ${escapeHtml(job.progress)}%</p>
-      <p><strong>Created:</strong> ${escapeHtml(job.createdAt)}</p>
-      <p><strong>Updated:</strong> ${escapeHtml(job.updatedAt)}</p>
-      ${job.status === "failed" ? `<div class="error">${escapeHtml(job.error || "Report generation failed.")}</div>` : ""}
+      <p><strong>Created:</strong> ${escapeHtml(formatJobTimestamp(createdAt))}</p>
+      <p><strong>Updated:</strong> ${escapeHtml(formatJobTimestamp(updatedAt))}</p>
+      ${job.status === "failed" ? `<div class="error">${escapeHtml(errorMessage || "Report generation failed.")}</div>` : ""}
       <div class="actions">
         ${job.status === "completed" ? `<a class="btn" href="/reports/${encodeURIComponent(job.id)}/view">View completed report</a>` : ""}
         ${isActive ? '<span>Refreshing every 3 seconds…</span>' : ""}
