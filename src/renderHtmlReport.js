@@ -143,7 +143,11 @@ function renderEmptyReportSection({ sourceInfo, filters, diagnostics }) {
 
 function rowsToTable(items, mapper) {
   if (!items.length) {
-    return '<p class="empty">No data</p>';
+    return `
+      <div class="empty-table">
+        <strong>No data available</strong>
+        <p>The selected source, period, or filters did not return rows for this section.</p>
+      </div>`;
   }
 
   return `
@@ -445,9 +449,13 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, k
     .report-actions {
       margin-bottom: 16px;
       display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
       justify-content: flex-start;
+      align-items: center;
     }
 
+    .action-link,
     .download-link {
       display: inline-flex;
       align-items: center;
@@ -459,11 +467,44 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, k
       font-weight: 700;
       text-decoration: none;
       box-shadow: 0 10px 24px rgba(21, 96, 100, 0.22);
+      border: 1px solid rgba(21, 96, 100, 0.1);
     }
 
+    .action-link.secondary {
+      background: #fff;
+      color: var(--accent);
+      border-color: rgba(21, 96, 100, 0.28);
+      box-shadow: none;
+    }
+
+    .action-link.disabled {
+      background: rgba(106, 114, 128, 0.15);
+      color: var(--flat);
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+
+    .action-link:hover,
     .download-link:hover {
       background: #0f4c50;
+      color: #fff;
     }
+
+    .empty-table {
+      border: 1px dashed rgba(79, 98, 114, 0.35);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.72);
+      padding: 16px;
+      color: var(--muted);
+    }
+
+    .empty-table strong {
+      display: block;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    .empty-table p { margin: 0; }
 
     @media (max-width: 700px) {
       .wrapper { width: 94vw; }
@@ -474,7 +515,12 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, k
 </head>
 <body>
   <div class="wrapper">
-    ${keywordCsvDownloadUrl ? `<div class="report-actions"><a class="download-link" href="${escapeHtml(keywordCsvDownloadUrl)}">Download keyword CSV</a></div>` : ""}
+    <div class="report-actions" aria-label="Report actions">
+      <a class="action-link secondary" href="/">Back to dashboard</a>
+      <a class="action-link" href="/reports/new">Create another report</a>
+      <span class="action-link disabled" aria-disabled="true">Download HTML (coming soon)</span>
+      ${keywordCsvDownloadUrl ? `<a class="download-link" href="${escapeHtml(keywordCsvDownloadUrl)}">Download keyword CSV</a>` : ""}
+    </div>
     <header>
       <h1>SEO Insight Report</h1>
       <div class="meta">

@@ -10,6 +10,10 @@ import { generateGeminiSeoInsights } from "./ai/geminiInsights.js";
 import { buildSeoAlerts, getSeoAlertConfig, hasHighSeverityAlerts, sendSeoAlertSummary } from "./alerts/seoAlerts.js";
 import { loadReportData } from "./dataLoader.js";
 import { renderHtmlReport } from "./renderHtmlReport.js";
+import { renderHomePage as renderDashboardHomePage } from "./pages/homePage.js";
+import { renderNewReportPage } from "./pages/newReportPage.js";
+import { renderSettingsPage } from "./pages/settingsPage.js";
+import { renderReportsPage } from "./pages/reportsPage.js";
 import { buildKeywordInsightsCsv } from "./exporters/csvExport.js";
 import { filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
 import {
@@ -604,360 +608,6 @@ function rememberPresetInSession(req, preset) {
   req.session.enableAiInsights = preset.enableAiInsights;
 }
 
-function renderHomePage({ sites = [], authenticated = false, defaultValues = {}, presets = [], error = "", warning = "", success = "", googleApiError = null } = {}) {
-  const sourceType = defaultValues.sourceType || "gsc";
-  const lookerPath = defaultValues.lookerCsvPath || (sourceType === "looker" ? "samples/gsc-looker-sample.csv" : "");
-  const contentPath = defaultValues.contentCsvPath || (sourceType === "looker" ? "samples/content-sample.csv" : "");
-  const selectedSiteUrl = defaultValues.siteUrl || defaultValues.selectedSiteUrl || "";
-  const selectedPermission = findSitePermission(sites, selectedSiteUrl);
-  const presetOptions = presets
-    .map((preset) => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)} — ${escapeHtml(preset.siteUrl)}</option>`)
-    .join("");
-  const reportPeriod = defaultValues.reportPeriod || "30d";
-  const searchType = defaultValues.searchType || "web";
-  const pageContains = defaultValues.pageContains || "";
-  const trackedKeywords = defaultValues.trackedKeywords || "";
-  const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
-  const seoAlertsConfigured = Boolean(process.env.SLACK_WEBHOOK_URL || (process.env.ALERT_EMAIL_PROVIDER_URL && process.env.ALERT_EMAIL_TO));
-  const seoAlertsDefaultEnabled = defaultValues.enableSeoAlerts ?? isEnvEnabled(process.env.SEO_ALERTS_ENABLED);
-  const propertyStatusMessage = googleApiError
-    ? `Search Console API error: ${googleApiError.message}`
-    : authenticated && sites.length === 0
-      ? "No Search Console properties found for this Google account. Make sure this account has access in Google Search Console."
-      : "";
-  const gscOptions = sites
-    .map(
-      (site) =>
-        `<option value="${escapeHtml(site.siteUrl)}" data-permission="${escapeHtml(site.permissionLevel)}" ${selected(site.siteUrl, selectedSiteUrl)}>${escapeHtml(site.siteUrl)} (${escapeHtml(site.permissionLevel)})</option>`,
-    )
-    .join("");
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SEO Report Builder</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --bg-1: #edf3ea;
-      --bg-2: #f9f0df;
-      --ink: #12232e;
-      --muted: #4f5d75;
-      --brand: #2c6e49;
-      --accent: #f95738;
-      --line: #d7dfdc;
-      --card: #fff;
-    }
-    body {
-      margin: 0;
-      font-family: "Public Sans", sans-serif;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at 12% 8%, rgba(44, 110, 73, 0.22), transparent 24%),
-        radial-gradient(circle at 90% 2%, rgba(249, 87, 56, 0.22), transparent 30%),
-        linear-gradient(155deg, var(--bg-1), var(--bg-2));
-    }
-    .shell { width: min(980px, 95vw); margin: 20px auto 40px; }
-    .card {
-      background: rgba(255,255,255,0.88);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 18px;
-      backdrop-filter: blur(6px);
-    }
-    h1, h2 { margin: 0 0 10px; font-family: "Space Grotesk", sans-serif; }
-    p { margin-top: 0; color: var(--muted); }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 12px;
-    }
-    label { display: block; margin-bottom: 4px; font-weight: 600; font-size: 0.9rem; }
-    input, select, textarea {
-      width: 100%;
-      padding: 10px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      font-size: 0.92rem;
-      background: #fff;
-    }
-    textarea { min-height: 110px; resize: vertical; }
-    .status {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      border-radius: 999px;
-      padding: 7px 10px;
-      margin-top: 10px;
-      font-weight: 700;
-      background: rgba(44, 110, 73, 0.1);
-      color: var(--brand);
-    }
-    .status.offline { background: rgba(249, 87, 56, 0.12); color: #7f1d1d; }
-    .note { color: var(--muted); font-size: 0.84rem; margin-top: 6px; }
-    .actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
-    .btn {
-      text-decoration: none;
-      border: 0;
-      display: inline-block;
-      padding: 10px 14px;
-      border-radius: 8px;
-      font-weight: 700;
-      cursor: pointer;
-    }
-    .btn-primary { background: var(--brand); color: #fff; }
-    .btn-ghost { background: transparent; color: var(--brand); border: 1px solid var(--brand); }
-    .error, .warning, .success {
-      background: rgba(249, 87, 56, 0.12);
-      border: 1px solid rgba(249, 87, 56, 0.4);
-      color: #7f1d1d;
-      border-radius: 8px;
-      padding: 10px;
-      margin-bottom: 12px;
-    }
-    .warning { margin-top: 10px; margin-bottom: 0; }
-    .success { background: rgba(44, 110, 73, 0.12); border-color: rgba(44, 110, 73, 0.35); color: var(--brand); }
-    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 14px 0; }
-    .info-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: rgba(44, 110, 73, 0.06); }
-    .info-card strong { display: block; margin-bottom: 6px; }
-    .field-hidden { display: none; }
-    .helper { margin-top: 16px; border-top: 1px dashed var(--line); padding-top: 12px; font-size: 0.9rem; }
-    .preset-panel {
-      display: grid;
-      grid-template-columns: minmax(260px, 1fr) minmax(220px, 0.8fr) auto;
-      gap: 12px;
-      align-items: end;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 12px;
-      margin-bottom: 14px;
-      background: rgba(44, 110, 73, 0.05);
-    }
-    .preset-actions { display: flex; align-items: end; min-height: 74px; }
-    @media (max-width: 780px) { .preset-panel { grid-template-columns: 1fr; } .preset-actions { min-height: auto; } }
-  </style>
-</head>
-<body>
-  <div class="shell">
-    <div class="card">
-      <h1>SEO Report Builder</h1>
-      <p>Authenticate Google first, then select an authorized Search Console property.</p>
-      ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
-      ${warning ? `<div class="warning"><pre>${escapeHtml(warning)}</pre></div>` : ""}
-      ${success ? `<div class="success">${escapeHtml(success)}</div>` : ""}
-      <div class="actions">
-        ${authenticated ? '<a class="btn btn-ghost" href="/auth/logout">Logout Google</a>' : '<a class="btn btn-primary" href="/auth/google">Authenticate Google</a>'}
-      </div>
-      <div class="status ${authenticated ? "" : "offline"}">${authenticated ? "Google connected" : "Google not connected"}</div>
-      ${propertyStatusMessage ? `<div class="warning">${escapeHtml(propertyStatusMessage)}</div>` : ""}
-
-      <div class="info-grid">
-        <div class="info-card"><strong>GSC mode</strong><span>Looker/Content CSV files are optional when using OAuth Search Console data.</span></div>
-        <div class="info-card"><strong>Preset dates</strong><span>Preset periods use a safe GSC end date to avoid fresh-data delays. Use Custom date range for exact dates.</span></div>
-        <div class="info-card"><strong>Empty reports</strong><span>If no rows match, the app now renders diagnostics instead of failing the whole report.</span></div>
-      </div>
-
-      <form action="/reports" method="post">
-        <div class="preset-panel">
-          <div>
-            <label>Preset</label>
-            <select id="presetSelect">
-              <option value="">Choose a saved preset</option>
-              ${presetOptions}
-            </select>
-            <div class="note">Selecting a GSC property auto-loads its most recently saved preset.</div>
-          </div>
-          <div>
-            <label>Preset name</label>
-            <input type="text" name="presetName" id="presetName" placeholder="Monthly SEO review" />
-          </div>
-          <div class="preset-actions">
-            <button type="submit" formaction="/presets" formmethod="post" class="btn btn-ghost">Save preset</button>
-          </div>
-        </div>
-        <div class="grid">
-          <div>
-            <label>Source Type</label>
-            <select name="sourceType" id="sourceType">
-              <option value="gsc" ${selected(sourceType, "gsc")}>GSC API (OAuth)</option>
-              <option value="looker" ${selected(sourceType, "looker")}>Looker CSV</option>
-            </select>
-          </div>
-          <div>
-            <label>GSC Property (choose after auth)</label>
-            <select name="siteUrl" id="siteUrl" ${authenticated ? "" : "disabled"}>
-              <option value="">${authenticated ? "Select a property" : "Authenticate first"}</option>
-              ${gscOptions}
-            </select>
-            <div class="note">Permission level: <strong id="permissionLevel">${escapeHtml(selectedPermission || "Select a property")}</strong></div>
-          </div>
-          <div>
-            <label>Search Type</label>
-            <select name="searchType" id="searchType">
-              <option value="web" ${selected(searchType, "web")}>web</option>
-              <option value="image" ${selected(searchType, "image")}>image</option>
-              <option value="video" ${selected(searchType, "video")}>video</option>
-              <option value="news" ${selected(searchType, "news")}>news</option>
-            </select>
-          </div>
-          <div class="csv-field" data-source-field="looker">
-            <label>Looker CSV Path</label>
-            <input type="text" name="lookerCsvPath" id="lookerCsvPath" value="${escapeHtml(lookerPath)}" data-default="samples/gsc-looker-sample.csv" />
-            <div class="note">Required only when Source Type is Looker CSV.</div>
-          </div>
-          <div class="csv-field" data-source-field="looker">
-            <label>Content Metadata CSV Path</label>
-            <input type="text" name="contentCsvPath" id="contentCsvPath" value="${escapeHtml(contentPath)}" data-default="samples/content-sample.csv" />
-            <div class="note">Optional for GSC; used for the publishing section only.</div>
-          </div>
-          <div>
-            <label>Report Period</label>
-            <select name="reportPeriod" id="reportPeriod">
-              <option value="7d" ${selected(reportPeriod, "7d")}>1 week</option>
-              <option value="30d" ${selected(reportPeriod, "30d")}>1 month</option>
-              <option value="90d" ${selected(reportPeriod, "90d")}>3 months</option>
-              <option value="180d" ${selected(reportPeriod, "180d")}>6 months</option>
-              <option value="custom" ${selected(reportPeriod, "custom")}>Custom date range</option>
-            </select>
-          </div>
-          <div>
-            <label>Start Date (for custom)</label>
-            <input type="date" name="startDate" id="startDate" value="${escapeHtml(defaultValues.startDate || "")}" />
-          </div>
-          <div>
-            <label>End Date (for custom)</label>
-            <input type="date" name="endDate" id="endDate" value="${escapeHtml(defaultValues.endDate || "")}" />
-          </div>
-          <div>
-            <label>Event/Page filter: URL contains</label>
-            <input type="text" name="pageContains" id="pageContains" value="${escapeHtml(pageContains)}" placeholder="/ten-su-kien/" />
-          </div>
-          <div>
-            <label>Service Key File (optional fallback)</label>
-            <input type="text" name="gscKeyFile" placeholder="C:\\keys\\service-account.json" />
-          </div>
-          <div>
-            <label>Tracked keywords</label>
-            <textarea name="trackedKeywords" id="trackedKeywords" placeholder="One keyword per line">${escapeHtml(trackedKeywords)}</textarea>
-            <div class="note">One keyword per line or comma-separated keywords.</div>
-          </div>
-          <div>
-            <label>AI Insights</label>
-            <div class="note"><input type="checkbox" name="enableAiInsights" id="enableAiInsights" value="1" style="width:auto;" ${checked(defaultValues.enableAiInsights)} /> Generate Gemini AI SEO insights when configured</div>
-            <div class="note">Gemini status: <strong>${geminiConfigured ? "configured" : "missing GEMINI_API_KEY"}</strong></div>
-          </div>
-          <div>
-            <label>SEO Alerts</label>
-            <div class="note"><input type="checkbox" name="enableSeoAlerts" value="1" style="width:auto;" ${checked(seoAlertsDefaultEnabled)} /> Send a summary only when high-severity alerts are detected</div>
-            <div class="note">Alert destination: <strong>${seoAlertsConfigured ? "configured" : "missing Slack webhook or email provider"}</strong></div>
-          </div>
-        </div>
-        <div class="actions">
-          <button type="submit" id="generateButton" class="btn btn-primary" ${authenticated || defaultValues.sourceType === "looker" ? "" : "disabled"}>Generate HTML Report</button>
-        </div>
-      </form>
-
-      <div class="helper">
-        <h2>Data format</h2>
-        <p>Looker CSV: <code>Date,Page,Clicks,Impressions,CTR,Position</code></p>
-        <p>Content CSV: <code>url,title,topic,published_date</code></p>
-      </div>
-      <script>
-        const siteSelect = document.getElementById("siteUrl");
-        const permissionEl = document.getElementById("permissionLevel");
-        const sourceTypeSelect = document.getElementById("sourceType");
-        const generateButton = document.getElementById("generateButton");
-        const reportPeriodSelect = document.getElementById("reportPeriod");
-        const startDateInput = document.getElementById("startDate");
-        const endDateInput = document.getElementById("endDate");
-        const lookerCsvPath = document.getElementById("lookerCsvPath");
-        const contentCsvPath = document.getElementById("contentCsvPath");
-        const sourceFields = document.querySelectorAll("[data-source-field]");
-        const presetSelect = document.getElementById("presetSelect");
-        const presetNameInput = document.getElementById("presetName");
-        const searchTypeSelect = document.getElementById("searchType");
-        const pageContainsInput = document.getElementById("pageContains");
-        const trackedKeywordsInput = document.getElementById("trackedKeywords");
-        const enableAiInsightsInput = document.getElementById("enableAiInsights");
-        const presets = ${safeJsonForHtml(presets)};
-        function syncSourceFields() {
-          const isLooker = sourceTypeSelect?.value === "looker";
-          sourceFields.forEach((field) => {
-            field.classList.toggle("field-hidden", !isLooker);
-            field.querySelectorAll("input, select, textarea").forEach((input) => {
-              input.disabled = !isLooker;
-              if (isLooker && !input.value && input.dataset.default) {
-                input.value = input.dataset.default;
-              }
-            });
-          });
-          if (!isLooker) {
-            if (lookerCsvPath) lookerCsvPath.value = "";
-            if (contentCsvPath) contentCsvPath.value = "";
-          }
-        }
-        function syncDateFields() {
-          const isCustom = reportPeriodSelect?.value === "custom";
-          [startDateInput, endDateInput].forEach((input) => {
-            if (input) input.disabled = !isCustom;
-          });
-        }
-        function applyPreset(preset) {
-          if (!preset) return;
-          if (siteSelect && preset.siteUrl) siteSelect.value = preset.siteUrl;
-          if (searchTypeSelect) searchTypeSelect.value = preset.searchType || "web";
-          if (reportPeriodSelect) reportPeriodSelect.value = preset.reportPeriod || "30d";
-          if (startDateInput) startDateInput.value = preset.startDate || "";
-          if (endDateInput) endDateInput.value = preset.endDate || "";
-          if (pageContainsInput) pageContainsInput.value = preset.pageContains || "";
-          if (trackedKeywordsInput) trackedKeywordsInput.value = preset.trackedKeywords || "";
-          if (enableAiInsightsInput) enableAiInsightsInput.checked = Boolean(preset.enableAiInsights);
-          if (presetNameInput) presetNameInput.value = preset.name || "";
-          if (presetSelect && preset.id) presetSelect.value = preset.id;
-          syncGenerateState();
-        }
-        function findLatestPreset(siteUrl) {
-          return presets
-            .filter((preset) => preset.siteUrl === siteUrl)
-            .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
-        }
-        function syncGenerateState() {
-          const selectedOption = siteSelect?.options[siteSelect.selectedIndex];
-          if (permissionEl) {
-            permissionEl.textContent = selectedOption?.dataset?.permission || "Select a property";
-          }
-          syncSourceFields();
-          syncDateFields();
-          if (generateButton) {
-            generateButton.disabled = sourceTypeSelect?.value === "gsc" ? !siteSelect?.value : false;
-          }
-        }
-        presetSelect?.addEventListener("change", () => {
-          applyPreset(presets.find((preset) => preset.id === presetSelect.value));
-        });
-        siteSelect?.addEventListener("change", () => {
-          const latestPreset = findLatestPreset(siteSelect.value);
-          if (latestPreset) {
-            applyPreset(latestPreset);
-            return;
-          }
-          if (presetSelect) presetSelect.value = "";
-          syncGenerateState();
-        });
-        sourceTypeSelect?.addEventListener("change", syncGenerateState);
-        reportPeriodSelect?.addEventListener("change", syncGenerateState);
-        syncGenerateState();
-      </script>
-    </div>
-  </div>
-</body>
-</html>`;
-}
-
 function startGoogleAuth(req, res) {
   try {
     const client = createOAuthClient(req);
@@ -1034,9 +684,10 @@ app.get("/", async (req, res) => {
   const requestedSiteUrl = req.query.siteUrl || req.session.selectedSiteUrl || "";
   const latestPreset = findLatestPresetForSite(presets, requestedSiteUrl);
   res.type("html").send(
-    renderHomePage({
+    renderDashboardHomePage({
       sites,
       authenticated: Boolean(getGoogleTokens(req)),
+      user: req.session.user,
       googleApiError,
       presets,
       success: req.query.presetSaved ? "Preset saved." : "",
@@ -1053,6 +704,53 @@ app.get("/", async (req, res) => {
   );
 });
 
+app.get("/reports/new", async (req, res) => {
+  const { sites, googleApiError } = await loadSitesResultForSession(req);
+  res.type("html").send(
+    renderNewReportPage({
+      sites,
+      authenticated: Boolean(getGoogleTokens(req)),
+      user: req.session.user,
+      googleApiError,
+      defaultValues: {
+        selectedSiteUrl: req.session.selectedSiteUrl,
+        reportPeriod: req.session.reportPeriod,
+        pageContains: req.session.pageContains,
+        trackedKeywords: req.session.trackedKeywords,
+        searchType: req.session.searchType,
+        enableAiInsights: req.session.enableAiInsights,
+      },
+    }),
+  );
+});
+
+app.get("/reports", (req, res) => {
+  res.type("html").send(renderReportsPage({ authenticated: Boolean(getGoogleTokens(req)), user: req.session.user }));
+});
+
+function buildEnvHealth() {
+  return {
+    GOOGLE_CLIENT_ID: Boolean(process.env.GOOGLE_CLIENT_ID),
+    GOOGLE_CLIENT_SECRET: Boolean(process.env.GOOGLE_CLIENT_SECRET),
+    GOOGLE_REDIRECT_URI: Boolean(process.env.GOOGLE_REDIRECT_URI),
+    SESSION_SECRET: Boolean(process.env.SESSION_SECRET),
+    DATABASE_URL: Boolean(process.env.DATABASE_URL),
+    GEMINI_API_KEY: Boolean(process.env.GEMINI_API_KEY),
+  };
+}
+
+app.get("/settings", (req, res) => {
+  res.type("html").send(
+    renderSettingsPage({
+      authenticated: Boolean(getGoogleTokens(req)),
+      user: req.session.user,
+      sessionActive: Boolean(req.session),
+      debugRoutesEnabled: isEnvEnabled(process.env.ENABLE_DEBUG_ROUTES),
+      envHealth: buildEnvHealth(),
+    }),
+  );
+});
+
 app.post("/presets", async (req, res) => {
   try {
     const preset = await savePreset(req.body);
@@ -1062,9 +760,10 @@ app.post("/presets", async (req, res) => {
     const { sites, googleApiError } = await loadSitesResultForSession(req);
     const presets = await listPresets().catch(() => []);
     res.status(400).type("html").send(
-      renderHomePage({
+      renderDashboardHomePage({
         sites,
         authenticated: Boolean(getGoogleTokens(req)),
+        user: req.session.user,
         googleApiError,
         presets,
         defaultValues: req.body,
@@ -1270,8 +969,18 @@ async function generateReportFromBody({ body, authClient, sessionObject, onProgr
   return { reportHtml, keywordCsv };
 }
 
+function getReportStatusTone(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (["completed"].includes(normalized)) return "green";
+  if (["queued"].includes(normalized)) return "orange";
+  if (["running"].includes(normalized)) return "blue";
+  if (["failed", "error"].includes(normalized)) return "red";
+  return "gray";
+}
+
 function renderReportStatusPage(job) {
   const isActive = ["queued", "running"].includes(job.status);
+  const statusTone = getReportStatusTone(job.status);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1279,14 +988,14 @@ function renderReportStatusPage(job) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Report status</title>
   ${isActive ? '<meta http-equiv="refresh" content="3" />' : ""}
-  <style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#edf3ea;color:#12232e;margin:0}.shell{width:min(760px,94vw);margin:40px auto}.card{background:#fff;border:1px solid #d7dfdc;border-radius:14px;padding:22px}.badge{display:inline-block;border-radius:999px;padding:6px 10px;background:#2c6e49;color:#fff;font-weight:700}.bar{height:14px;background:#d7dfdc;border-radius:999px;overflow:hidden;margin:16px 0}.bar span{display:block;height:100%;background:#2c6e49}.error{white-space:pre-wrap;background:#fee2e2;border:1px solid #fca5a5;color:#7f1d1d;border-radius:8px;padding:10px}.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-block;padding:10px 14px;border-radius:8px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:700}.btn.secondary{background:#fff;color:#2c6e49;border:1px solid #2c6e49}</style>
+  <style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#edf3ea;color:#12232e;margin:0}.shell{width:min(760px,94vw);margin:40px auto}.card{background:#fff;border:1px solid #d7dfdc;border-radius:14px;padding:22px}.badge{display:inline-block;border-radius:999px;padding:6px 10px;font-weight:700}.badge.green{background:#dcfce7;color:#15803d}.badge.orange{background:#ffedd5;color:#c2410c}.badge.blue{background:#dbeafe;color:#1d4ed8}.badge.red{background:#fee2e2;color:#b91c1c}.badge.gray{background:#e2e8f0;color:#475569}.bar{height:14px;background:#d7dfdc;border-radius:999px;overflow:hidden;margin:16px 0}.bar span{display:block;height:100%;background:#2c6e49}.error{white-space:pre-wrap;background:#fee2e2;border:1px solid #fca5a5;color:#7f1d1d;border-radius:8px;padding:10px}.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-block;padding:10px 14px;border-radius:8px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:700}.btn.secondary{background:#fff;color:#2c6e49;border:1px solid #2c6e49}</style>
 </head>
 <body>
   <main class="shell">
     <section class="card">
       <h1>Report status</h1>
       <p>Job <code>${escapeHtml(job.id)}</code></p>
-      <p><span class="badge">${escapeHtml(job.status)}</span></p>
+      <p><span class="badge ${escapeHtml(statusTone)}">${escapeHtml(job.status)}</span></p>
       <div class="bar" aria-label="Progress"><span style="width:${escapeHtml(job.progress)}%"></span></div>
       <p><strong>Progress:</strong> ${escapeHtml(job.progress)}%</p>
       <p><strong>Created:</strong> ${escapeHtml(job.createdAt)}</p>
@@ -1337,10 +1046,10 @@ app.post("/reports", async (req, res) => {
     const sites = await loadSitesForSession(req).catch(() => []);
     const emptyData = isEmptyDataError(error);
     res.status(400).type("html").send(
-      renderHomePage({
+      renderNewReportPage({
         sites,
         authenticated: Boolean(getGoogleTokens(req)),
-        presets: await listPresets().catch(() => []),
+        user: req.session.user,
         defaultValues: req.body,
         error: emptyData ? "" : error instanceof Error ? error.message : "Report generation failed.",
         warning: emptyData ? buildEmptyDataWarning(error, req.body) : "",
@@ -1380,10 +1089,10 @@ app.post("/generate", async (req, res) => {
     const sites = await loadSitesForSession(req).catch(() => []);
     const emptyData = isEmptyDataError(error);
     res.status(400).type("html").send(
-      renderHomePage({
+      renderNewReportPage({
         sites,
         authenticated: Boolean(getGoogleTokens(req)),
-        presets: await listPresets().catch(() => []),
+        user: req.session.user,
         defaultValues: req.body,
         error: emptyData ? "" : error instanceof Error ? error.message : "Report generation failed.",
         warning: emptyData ? buildEmptyDataWarning(error, req.body) : "",
