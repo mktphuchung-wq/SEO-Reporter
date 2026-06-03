@@ -5,17 +5,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import session from "express-session";
 import { google } from "googleapis";
-import { buildSeoInsights } from "./analytics.js";
-import { generateGeminiSeoInsights } from "./ai/geminiInsights.js";
-import { buildSeoAlerts, getSeoAlertConfig, hasHighSeverityAlerts, sendSeoAlertSummary } from "./alerts/seoAlerts.js";
-import { loadReportData } from "./dataLoader.js";
-import { renderHtmlReport } from "./renderHtmlReport.js";
 import { renderHomePage as renderDashboardHomePage } from "./pages/homePage.js";
 import { renderNewReportPage } from "./pages/newReportPage.js";
 import { renderSettingsPage } from "./pages/settingsPage.js";
 import { renderReportsPage } from "./pages/reportsPage.js";
 import { escapeHtml } from "./ui/html.js";
-import { buildKeywordInsightsCsv } from "./exporters/csvExport.js";
 import { filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
 import { query as dbQuery } from "./db/client.js";
 import {
@@ -681,7 +675,6 @@ app.get("/", async (req, res) => {
         pageContains: req.session.pageContains,
         trackedKeywords: req.session.trackedKeywords,
         searchType: req.session.searchType,
-        enableSeoAlerts: req.session.enableSeoAlerts,
       },
     }),
   );
@@ -795,7 +788,7 @@ function validateReportRequest(body = {}, authClient = null) {
   return sourceType;
 }
 
-function rememberReportRequestInSession(sessionObject, body, { reportPeriod, pageContains, trackedKeywordsInput, enableSeoAlerts } = {}) {
+function rememberReportRequestInSession(sessionObject, body, { reportPeriod, pageContains, trackedKeywordsInput } = {}) {
   if (!sessionObject) {
     return;
   }
@@ -805,7 +798,6 @@ function rememberReportRequestInSession(sessionObject, body, { reportPeriod, pag
   sessionObject.pageContains = pageContains;
   sessionObject.trackedKeywords = trackedKeywordsInput;
   sessionObject.searchType = body.searchType || "web";
-  sessionObject.enableSeoAlerts = enableSeoAlerts;
 }
 
 async function generateReportFromBody({ body, authClient, sessionObject, onProgress = () => {} }) {
@@ -813,9 +805,7 @@ async function generateReportFromBody({ body, authClient, sessionObject, onProgr
   const reportPeriod = body.reportPeriod || "30d";
   const pageContains = String(body.pageContains || "").trim();
   const trackedKeywordsInput = body.trackedKeywords || "";
-  const enableSeoAlerts = Boolean(body.enableSeoAlerts) || isEnvEnabled(process.env.SEO_ALERTS_ENABLED);
-
-  rememberReportRequestInSession(sessionObject, body, { reportPeriod, pageContains, trackedKeywordsInput, enableSeoAlerts });
+  rememberReportRequestInSession(sessionObject, body, { reportPeriod, pageContains, trackedKeywordsInput });
 
   const result = await generateReportFromInput({
     input: { ...body, sourceType, reportPeriod, pageContains },

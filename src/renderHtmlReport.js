@@ -1,13 +1,15 @@
 import { escapeHtml } from "./ui/html.js";
 
 function formatNumber(value) {
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 0,
-  }).format(Number(value || 0));
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Number(value || 0));
 }
 
 function formatPct(value, digits = 2) {
   return `${(Number(value || 0) * 100).toFixed(digits)}%`;
+}
+
+function formatPoint(value, digits = 2) {
+  return `${formatSigned(Number(value || 0) * 100, digits)}pt`;
 }
 
 function formatSigned(value, digits = 0) {
@@ -20,50 +22,9 @@ function formatDeltaPercent(deltaPercent) {
   if (deltaPercent === null || deltaPercent === undefined) {
     return "new";
   }
-
   const sign = deltaPercent > 0 ? "+" : "";
-  return `${sign}${deltaPercent.toFixed(1)}%`;
+  return `${sign}${Number(deltaPercent || 0).toFixed(1)}%`;
 }
-
-function periodCardHtml(card) {
-  const clickDirection = card.delta.clicks.absolute > 0 ? "up" : card.delta.clicks.absolute < 0 ? "down" : "flat";
-  const impressionDirection =
-    card.delta.impressions.absolute > 0 ? "up" : card.delta.impressions.absolute < 0 ? "down" : "flat";
-  const ctrDirection = card.delta.ctr.absolute > 0 ? "up" : card.delta.ctr.absolute < 0 ? "down" : "flat";
-  const positionDirection =
-    card.delta.position.absolute > 0 ? "up" : card.delta.position.absolute < 0 ? "down" : "flat";
-
-  return `
-  <article class="metric-card">
-    <div class="metric-head">
-      <h3>${escapeHtml(card.label)}</h3>
-      <p>${card.range.start} -> ${card.range.end}</p>
-    </div>
-    <div class="metric-grid">
-      <div>
-        <span>Clicks</span>
-        <strong>${formatNumber(card.summary.clicks)}</strong>
-        <small class="${clickDirection}">${formatSigned(card.delta.clicks.absolute)} (${formatDeltaPercent(card.delta.clicks.percent)})</small>
-      </div>
-      <div>
-        <span>Impressions</span>
-        <strong>${formatNumber(card.summary.impressions)}</strong>
-        <small class="${impressionDirection}">${formatSigned(card.delta.impressions.absolute)} (${formatDeltaPercent(card.delta.impressions.percent)})</small>
-      </div>
-      <div>
-        <span>CTR</span>
-        <strong>${formatPct(card.summary.ctr)}</strong>
-        <small class="${ctrDirection}">${formatSigned(card.delta.ctr.absolute * 100, 2)}pt (${formatDeltaPercent(card.delta.ctr.percent)})</small>
-      </div>
-      <div>
-        <span>Avg Position</span>
-        <strong>${Number(card.summary.position || 0).toFixed(2)}</strong>
-        <small class="${positionDirection}">${formatSigned(card.delta.position.absolute, 2)} (${formatDeltaPercent(card.delta.position.percent)})</small>
-      </div>
-    </div>
-  </article>`;
-}
-
 
 function formatPosition(value) {
   return value === null || value === undefined ? "—" : Number(value || 0).toFixed(2);
@@ -74,743 +35,305 @@ function deltaClass(value) {
   return numeric > 0 ? "up" : numeric < 0 ? "down" : "flat";
 }
 
-function inverseDeltaClass(value) {
-  const numeric = Number(value || 0);
-  return numeric > 0 ? "down" : numeric < 0 ? "up" : "flat";
-}
-
 function linkedUrl(url) {
-  if (!url) {
-    return "—";
-  }
+  if (!url) return "—";
   return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
-}
-
-function aiList(items) {
-  if (!items?.length) {
-    return '<p class="empty">No AI items</p>';
-  }
-  return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
 }
 
 function priorityBadge(priority) {
   return `<span class="priority priority-${escapeHtml(priority || "low")}">${escapeHtml(priority || "low")}</span>`;
 }
 
+function aiList(items) {
+  if (!items?.length) return '<p class="empty">No AI items</p>';
+  return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function rangeLabel(range) {
+  return range ? `${range.start} -> ${range.end}` : "—";
+}
+
 function yesNo(value) {
   return value ? "Yes" : "No";
 }
 
+function rowsToTable(items = [], mapper, emptyMessage = "The selected source, period, or filters did not return rows for this section.") {
+  if (!items.length) {
+    return `<div class="empty-table"><strong>No data available</strong><p>${escapeHtml(emptyMessage)}</p></div>`;
+  }
+
+  return `<table><thead>${mapper.header}</thead><tbody>${items.map((item, index) => mapper.row(item, index)).join("\n")}</tbody></table>`;
+}
 
 function renderEmptyReportSection({ sourceInfo, filters, diagnostics }) {
   const emptyReason = sourceInfo.emptyReason || diagnostics.emptyReason || diagnostics.emptyDataWarning;
-  if (!emptyReason) {
-    return "";
-  }
+  if (!emptyReason) return "";
 
-  const dateRange = sourceInfo.range ? `${sourceInfo.range.start} -> ${sourceInfo.range.end}` : "—";
-  const pageContains = filters.pageContains || "None";
-
-  return `
-    <section class="empty-report">
-      <h2>Empty Report Diagnostics</h2>
-      <p class="note-box" style="border-color: rgba(179,54,54,.45); background: rgba(179,54,54,.09);">${escapeHtml(emptyReason)}</p>
-      <div class="kpis" style="margin-top:10px;">
-        <div class="kpi"><span>Property</span><strong>${escapeHtml(sourceInfo.property || "—")}</strong></div>
-        <div class="kpi"><span>Date range</span><strong>${escapeHtml(dateRange)}</strong></div>
-        <div class="kpi"><span>Search type</span><strong>${escapeHtml(filters.searchType || "web")}</strong></div>
-        <div class="kpi"><span>Page contains</span><strong>${escapeHtml(pageContains)}</strong></div>
-        <div class="kpi"><span>Page rows received</span><strong>${formatNumber(diagnostics.pageRowCount || 0)}</strong></div>
-        <div class="kpi"><span>Keyword rows received</span><strong>${formatNumber(diagnostics.keywordRowCount || 0)}</strong></div>
-      </div>
-      <div class="note-box" style="margin-top:10px;">
-        <strong>Suggested next tries</strong>
-        <ul>
-          <li>Remove or relax the URL filter, especially <code>/ten-su-kien/</code>, then generate again.</li>
-          <li>Select a wider date range so Search Console has more matching page data to return.</li>
-          <li>Use an end date that is 2–3 days earlier to avoid fresh GSC data delays.</li>
-        </ul>
-      </div>
-    </section>`;
+  return `<section class="empty-report">
+    <h2>Empty Report Diagnostics</h2>
+    <p class="note-box danger">${escapeHtml(emptyReason)}</p>
+    <div class="kpis">
+      <div class="kpi"><span>Property</span><strong>${escapeHtml(sourceInfo.property || "—")}</strong></div>
+      <div class="kpi"><span>Date range</span><strong>${escapeHtml(rangeLabel(sourceInfo.range))}</strong></div>
+      <div class="kpi"><span>Search type</span><strong>${escapeHtml(filters.searchType || "web")}</strong></div>
+      <div class="kpi"><span>Page contains</span><strong>${escapeHtml(filters.pageContains || "None")}</strong></div>
+      <div class="kpi"><span>Page rows received</span><strong>${formatNumber(diagnostics.pageRowCount || 0)}</strong></div>
+      <div class="kpi"><span>Keyword rows received</span><strong>${formatNumber(diagnostics.keywordRowCount || 0)}</strong></div>
+    </div>
+  </section>`;
 }
 
-function rowsToTable(items, mapper) {
-  if (!items.length) {
-    return `
-      <div class="empty-table">
-        <strong>No data available</strong>
-        <p>The selected source, period, or filters did not return rows for this section.</p>
-      </div>`;
-  }
+function renderOverview(overview) {
+  const metricRows = [
+    ["Clicks", formatNumber(overview.current.clicks), formatNumber(overview.previous.clicks), formatSigned(overview.delta.clicks.absolute), formatDeltaPercent(overview.delta.clicks.percent), overview.delta.clicks.absolute],
+    ["Impressions", formatNumber(overview.current.impressions), formatNumber(overview.previous.impressions), formatSigned(overview.delta.impressions.absolute), formatDeltaPercent(overview.delta.impressions.percent), overview.delta.impressions.absolute],
+    ["CTR", formatPct(overview.current.ctr), formatPct(overview.previous.ctr), formatPoint(overview.delta.ctr.absolute), formatDeltaPercent(overview.delta.ctr.percent), overview.delta.ctr.absolute],
+    ["Avg Position", formatPosition(overview.current.position), formatPosition(overview.previous.position), formatSigned(overview.delta.position.absolute, 2), formatDeltaPercent(overview.delta.position.percent), overview.delta.position.absolute],
+  ];
 
-  return `
-  <table>
-    <thead>${mapper.header}</thead>
-    <tbody>
-      ${items.map((item, index) => mapper.row(item, index)).join("\n")}
-    </tbody>
-  </table>`;
+  return `<section>
+    <h2>Report Period Overview</h2>
+    ${overview.note ? `<p class="note-box">${escapeHtml(overview.note)}</p>` : ""}
+    <div class="kpis">
+      <div class="kpi"><span>Selected report period</span><strong>${escapeHtml(rangeLabel(overview.currentRange))}</strong></div>
+      <div class="kpi"><span>Previous comparable period</span><strong>${escapeHtml(rangeLabel(overview.previousRange))}</strong></div>
+    </div>
+    <table style="margin-top:12px;"><thead><tr><th>Metric</th><th>Current</th><th>Previous</th><th>Delta</th><th>Delta %</th></tr></thead><tbody>
+      ${metricRows.map(([label, current, previous, delta, pct, direction]) => `<tr><td>${label}</td><td>${current}</td><td>${previous}</td><td class="${deltaClass(direction)}">${delta}</td><td>${escapeHtml(pct)}</td></tr>`).join("")}
+    </tbody></table>
+    <p class="muted">For average position, lower is better; positive position delta means improved rankings.</p>
+  </section>`;
 }
 
-export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, keywordCsvDownloadUrl = "" }) {
-  const publishing = insights.thisMonthPublishing;
-  const trend30 = insights.trending30Days;
-  const sixMonths = insights.url6MonthInsights;
-  const perf = insights.performance3Months;
+function urlComparisonTable(rows) {
+  return rowsToTable(rows, {
+    header: "<tr><th>#</th><th>URL</th><th>Current clicks</th><th>Previous clicks</th><th>Click Δ</th><th>Click Δ %</th><th>Current impressions</th><th>Avg position</th><th>Position change</th></tr>",
+    row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatNumber(item.previousClicks)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td>${escapeHtml(formatDeltaPercent(item.clickPct))}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatPosition(item.currentPosition)}</td><td class="${deltaClass(item.positionChange)}">${formatSigned(item.positionChange, 2)}</td></tr>`,
+  });
+}
+
+function renderPerformance3Months(perf) {
+  return `<section>
+    <h2>SEO Performance - Last 3 Months vs Previous 3 Months</h2>
+    ${perf.note ? `<p class="note-box">${escapeHtml(perf.note)}</p>` : ""}
+    <p class="muted">Current: ${escapeHtml(rangeLabel(perf.currentRange))} | Previous: ${escapeHtml(rangeLabel(perf.previousRange))}</p>
+    <div class="kpis">
+      <div class="kpi"><span>Current clicks</span><strong>${formatNumber(perf.current.clicks)}</strong><small class="${deltaClass(perf.delta.clicks.absolute)}">${formatSigned(perf.delta.clicks.absolute)} (${formatDeltaPercent(perf.delta.clicks.percent)})</small></div>
+      <div class="kpi"><span>Current impressions</span><strong>${formatNumber(perf.current.impressions)}</strong><small class="${deltaClass(perf.delta.impressions.absolute)}">${formatSigned(perf.delta.impressions.absolute)} (${formatDeltaPercent(perf.delta.impressions.percent)})</small></div>
+      <div class="kpi"><span>CTR</span><strong>${formatPct(perf.current.ctr)}</strong><small class="${deltaClass(perf.delta.ctr.absolute)}">${formatPoint(perf.delta.ctr.absolute)}</small></div>
+      <div class="kpi"><span>Avg position</span><strong>${formatPosition(perf.current.position)}</strong><small class="${deltaClass(perf.delta.position.absolute)}">${formatSigned(perf.delta.position.absolute, 2)}</small></div>
+      <div class="kpi"><span>URLs growth &gt; 20%</span><strong>${formatNumber(perf.growthCounts.clickGrowthOver20)}</strong></div>
+      <div class="kpi"><span>URLs loss &gt; 20%</span><strong>${formatNumber(perf.growthCounts.clickLossOver20)}</strong></div>
+      <div class="kpi"><span>Newly gaining clicks</span><strong>${formatNumber(perf.growthCounts.newlyGainingClicks)}</strong></div>
+      <div class="kpi"><span>Dropped to zero clicks</span><strong>${formatNumber(perf.growthCounts.droppedToZeroClicks)}</strong></div>
+    </div>
+    <div class="two-col" style="margin-top:12px;"><div class="chart-box"><canvas id="dailyChart"></canvas></div><div class="chart-box"><canvas id="monthlyChart"></canvas></div></div>
+    <h3 style="margin-top:14px;">Outstanding URLs In Current 3 Months</h3>
+    <div class="two-col" style="margin-top:8px;">
+      <div><h3>Top URLs by clicks</h3>${urlComparisonTable(perf.outstandingUrls.topByClicks)}</div>
+      <div><h3>Top URLs by impressions</h3>${urlComparisonTable(perf.outstandingUrls.topByImpressions)}</div>
+      <div><h3>Fastest growing URLs vs previous 3 months</h3>${urlComparisonTable(perf.outstandingUrls.fastestGrowing)}</div>
+      <div><h3>Fastest declining URLs vs previous 3 months</h3>${urlComparisonTable(perf.outstandingUrls.fastestDeclining)}</div>
+    </div>
+  </section>`;
+}
+
+function renderLast30Contribution(contribution) {
+  return `<section>
+    <h2>Last 30 Days Contribution Within Current 3 Months</h2>
+    <div class="kpis">
+      <div class="kpi"><span>Last 30 clicks</span><strong>${formatNumber(contribution.last30Clicks)}</strong></div>
+      <div class="kpi"><span>Current 3-month clicks</span><strong>${formatNumber(contribution.current3MonthClicks)}</strong></div>
+      <div class="kpi"><span>Last 30 click share</span><strong>${contribution.last30ClickShare.toFixed(1)}%</strong></div>
+      <div class="kpi"><span>Last 30 impressions</span><strong>${formatNumber(contribution.last30Impressions)}</strong></div>
+      <div class="kpi"><span>Current 3-month impressions</span><strong>${formatNumber(contribution.current3MonthImpressions)}</strong></div>
+      <div class="kpi"><span>Last 30 impression share</span><strong>${contribution.last30ImpressionShare.toFixed(1)}%</strong></div>
+      <div class="kpi"><span>Interpretation</span><strong>${escapeHtml(contribution.interpretation)}</strong></div>
+    </div>
+  </section>`;
+}
+
+function renderContentSnapshot(snapshot) {
+  return `<section>
+    <h2>Content Opportunity Snapshot</h2>
+    ${snapshot.note ? `<p class="note-box">${escapeHtml(snapshot.note)}</p>` : ""}
+    <div class="two-col">
+      <div><h3>Top Growing URLs</h3>${urlComparisonTable(snapshot.topGrowingUrls)}</div>
+      <div><h3>Top Declining URLs</h3>${urlComparisonTable(snapshot.topDecliningUrls)}</div>
+      <div><h3>High-Impression Low-CTR URLs</h3>${rowsToTable(snapshot.highImpressionLowCtr, {
+        header: "<tr><th>#</th><th>URL</th><th>Impressions</th><th>Clicks</th><th>CTR</th><th>Avg position</th><th>Recommendation</th></tr>",
+        row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatNumber(item.impressions)}</td><td>${formatNumber(item.clicks)}</td><td>${formatPct(item.ctr)}</td><td>${formatPosition(item.position)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
+      })}</div>
+      <div><h3>New/Rising URLs</h3>${urlComparisonTable(snapshot.newRisingUrls)}</div>
+    </div>
+  </section>`;
+}
+
+function movementTable(rows, emptyMessage) {
+  return rowsToTable(rows, {
+    header: "<tr><th>#</th><th>URL</th><th>Clicks Δ</th><th>Impressions Δ</th><th>Current clicks</th><th>Previous clicks</th><th>Current impressions</th><th>Previous impressions</th></tr>",
+    row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td class="${deltaClass(item.impressionDelta)}">${formatSigned(item.impressionDelta)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatNumber(item.previousClicks)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatNumber(item.previousImpressions)}</td></tr>`,
+  }, emptyMessage);
+}
+
+function renderUrlMovement(movement) {
+  return `<section>
+    <h2>GSC URL Movement - Last 30 Days vs Previous 30 Days</h2>
+    ${movement.hasPreviousData ? "" : `<p class="note-box">Previous 30-day comparison may be limited by fetched data range.</p>`}
+    <p class="muted">Window compare: ${escapeHtml(rangeLabel(movement.currentRange))} vs ${escapeHtml(rangeLabel(movement.previousRange))}</p>
+    <div class="two-col">
+      <div><h3>Trending Up</h3>${movementTable(movement.trendingUp)}</div>
+      <div><h3>Trending Down</h3>${movement.trendingDown.length ? movementTable(movement.trendingDown) : `<p class="note-box">${escapeHtml(movement.emptyDeclineMessage)}</p><h3 style="margin-top:10px;">Small Declines</h3>${movementTable(movement.smallDeclines, "No meaningful declines detected for this filter.")}`}</div>
+    </div>
+  </section>`;
+}
+
+function renderGeminiInsights(geminiInsights) {
+  return `<section>
+    <h2>Executive Summary / Gemini AI SEO Insights</h2>
+    ${geminiInsights.available ? `
+      <div class="two-col">
+        <div><h3>Executive Summary</h3>${aiList(geminiInsights.executiveSummary)}</div>
+        <div><h3>What Changed</h3>${rowsToTable(geminiInsights.whatChanged || [], {
+          header: "<tr><th>Finding</th><th>Evidence</th><th>Impact</th></tr>",
+          row: (item) => `<tr><td>${escapeHtml(item.finding)}</td><td>${escapeHtml(item.evidence)}</td><td>${priorityBadge(item.impact)}</td></tr>`,
+        })}</div>
+        <div><h3>Risks</h3>${rowsToTable(geminiInsights.risks || [], {
+          header: "<tr><th>Risk</th><th>Evidence</th><th>Recommended action</th></tr>",
+          row: (item) => `<tr><td>${escapeHtml(item.risk)}</td><td>${escapeHtml(item.evidence)}</td><td>${escapeHtml(item.recommendedAction)}</td></tr>`,
+        })}</div>
+        <div><h3>Opportunities</h3>${rowsToTable(geminiInsights.opportunities || [], {
+          header: "<tr><th>Opportunity</th><th>Evidence</th><th>Recommended action</th></tr>",
+          row: (item) => `<tr><td>${escapeHtml(item.opportunity)}</td><td>${escapeHtml(item.evidence)}</td><td>${escapeHtml(item.recommendedAction)}</td></tr>`,
+        })}</div>
+      </div>
+      <h3 style="margin-top:12px;">Recommendation Actions</h3>
+      ${rowsToTable(geminiInsights.recommendationActions || [], {
+        header: "<tr><th>Priority</th><th>Action</th><th>Target URL</th><th>Target query</th><th>Why</th><th>Expected impact</th><th>Effort</th></tr>",
+        row: (item) => `<tr><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.action)}</td><td class="url">${linkedUrl(item.targetUrl)}</td><td>${escapeHtml(item.targetQuery)}</td><td>${escapeHtml(item.why)}</td><td>${escapeHtml(item.expectedImpact)}</td><td>${escapeHtml(item.effort)}</td></tr>`,
+      })}
+      <h3 style="margin-top:12px;">Content Refresh Plan</h3>
+      ${rowsToTable(geminiInsights.contentRefreshPlan || [], {
+        header: "<tr><th>URL</th><th>Reason</th><th>Update suggestion</th><th>Supporting queries</th></tr>",
+        row: (item) => `<tr><td class="url">${linkedUrl(item.url)}</td><td>${escapeHtml(item.reason)}</td><td>${escapeHtml(item.updateSuggestion)}</td><td>${escapeHtml((item.supportingQueries || []).join(", "))}</td></tr>`,
+      })}
+      <h3 style="margin-top:12px;">Next Report Focus</h3>${aiList(geminiInsights.nextReportFocus)}
+    ` : `<p class="empty">${escapeHtml(geminiInsights.message || "AI insight unavailable.")}</p>`}
+  </section>`;
+}
+
+function renderKeywordSections(keywordInsights, keywordCsvDownloadUrl) {
   const trackedKeywordMovements = keywordInsights.trackedKeywordMovements || [];
   const highImpressionDrops = keywordInsights.highImpressionDrops || [];
   const nearPageOneKeywords = keywordInsights.nearPageOneKeywords || [];
   const keywordWinners = keywordInsights.keywordWinners || [];
   const ctrOpportunities = keywordInsights.ctrOpportunities || [];
-  const seoAlerts = keywordInsights.seoAlerts || [];
+
+  if (!trackedKeywordMovements.length && !highImpressionDrops.length && !nearPageOneKeywords.length && !keywordWinners.length && !ctrOpportunities.length) {
+    return `<section><h2>Keyword / Query Opportunities</h2><p class="empty">No keyword/query opportunity data is available for this report.</p></section>`;
+  }
+
+  return `<section>
+    <h2>Keyword / Query Opportunities</h2>
+    ${keywordCsvDownloadUrl ? `<p><a class="download-link" href="${escapeHtml(keywordCsvDownloadUrl)}">Download keyword CSV</a></p>` : ""}
+    <h3>Tracked Keyword Ranking Movement</h3>${rowsToTable(trackedKeywordMovements, {
+      header: "<tr><th>Keyword</th><th>Match type</th><th>Best URL</th><th>Current position</th><th>Previous position</th><th>Position change</th><th>Current clicks</th><th>Click change</th><th>Action hint</th></tr>",
+      row: (item) => `<tr><td>${escapeHtml(item.keyword)}</td><td>${escapeHtml(item.matchType)}</td><td class="url">${linkedUrl(item.bestCurrentUrl)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatPosition(item.previousAvgPosition)}</td><td class="${deltaClass(item.positionDelta)}">${item.positionDelta === null ? "—" : formatSigned(item.positionDelta, 2)}</td><td>${formatNumber(item.currentClicks)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td>${escapeHtml(item.actionHint)}</td></tr>`,
+    })}
+    <h3 style="margin-top:12px;">High Impression Keywords With Ranking Drop</h3>${rowsToTable(highImpressionDrops, {
+      header: "<tr><th>Query</th><th>URL</th><th>Current position</th><th>Previous position</th><th>Current impressions</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
+      row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatPosition(item.previousAvgPosition)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatPct(item.currentCtr)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
+    })}
+    <h3 style="margin-top:12px;">High Impression Keywords Near Page 1</h3>${rowsToTable(nearPageOneKeywords, {
+      header: "<tr><th>Query</th><th>URL</th><th>Position</th><th>Impressions</th><th>Clicks</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
+      row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatPct(item.currentCtr)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
+    })}
+    <h3 style="margin-top:12px;">CTR Opportunity Keywords</h3>${rowsToTable(ctrOpportunities, {
+      header: "<tr><th>Query</th><th>URL</th><th>Position</th><th>Impressions</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
+      row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatPct(item.currentCtr)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
+    })}
+    <h3 style="margin-top:12px;">Keyword Winners</h3>${rowsToTable(keywordWinners, {
+      header: "<tr><th>Query</th><th>URL</th><th>Current position</th><th>Position gain</th><th>Click change</th><th>Priority</th><th>Recommendation</th></tr>",
+      row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td class="up">${item.positionDelta === null ? "—" : formatSigned(item.positionDelta, 2)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
+    })}
+  </section>`;
+}
+
+function render6MonthSignals(sixMonths) {
+  if (!sixMonths?.hasEnoughData) {
+    return `<section><h2>URL Signals In 6 Months</h2><p class="note-box">${escapeHtml(sixMonths?.note || "Only limited data is available, so 6-month views are hidden.")}</p></section>`;
+  }
+
+  return `<section>
+    <h2>URL Signals In 6 Months</h2>
+    <p class="muted">Month buckets: ${(sixMonths.monthKeys || []).map(escapeHtml).join(" | ")}</p>
+    <div class="two-col" style="margin-top:8px;">
+      <div><h3>Top Increase (Most)</h3>${rowsToTable(sixMonths.topIncreaseMost, {
+        header: "<tr><th>#</th><th>URL</th><th>Δ Clicks</th><th>Start Month</th><th>Last Month</th></tr>",
+        row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td class="up">${formatSigned(item.delta)}</td><td>${formatNumber(item.firstMonth)}</td><td>${formatNumber(item.lastMonth)}</td></tr>`,
+      })}</div>
+      <div><h3>Top Decrease (Most)</h3>${rowsToTable(sixMonths.topDecreaseMost, {
+        header: "<tr><th>#</th><th>URL</th><th>Δ Clicks</th><th>Start Month</th><th>Last Month</th></tr>",
+        row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td class="down">${formatSigned(item.delta)}</td><td>${formatNumber(item.firstMonth)}</td><td>${formatNumber(item.lastMonth)}</td></tr>`,
+      })}</div>
+    </div>
+    <div class="chart-box" style="margin-top: 12px;"><canvas id="moverChart"></canvas></div>
+  </section>`;
+}
+
+export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, keywordCsvDownloadUrl = "" }) {
+  const overview = insights.selectedPeriodOverview;
+  const perf = insights.performance3MonthComparison;
+  const contribution = insights.last30Contribution;
+  const snapshot = insights.contentOpportunitySnapshot;
+  const movement = insights.urlMovement30Days;
+  const sixMonths = insights.url6MonthInsights;
   const geminiInsights = keywordInsights.geminiInsights || { available: false, message: "AI insight not requested." };
   const filters = sourceInfo.filters || {};
   const diagnostics = sourceInfo.diagnostics || {};
-  const dataDelayNote = sourceInfo.dataDelayNote || (diagnostics.gscDataDelayDays != null && sourceInfo.range?.end
-    ? `GSC data may be delayed; report ends at ${sourceInfo.range.end}.`
-    : null);
-
+  const dataDelayNote = sourceInfo.dataDelayNote || (diagnostics.gscDataDelayDays != null && sourceInfo.range?.end ? `GSC data may be delayed; report ends at ${sourceInfo.range.end}.` : null);
   const chartPayload = {
-    dailyLabels: perf.dailySeries.map((x) => x.date),
-    dailyClicks: perf.dailySeries.map((x) => Number(x.clicks.toFixed(2))),
-    dailyImpressions: perf.dailySeries.map((x) => Number(x.impressions.toFixed(2))),
-    monthlyLabels: perf.monthly.map((x) => x.month),
-    monthlyClicks: perf.monthly.map((x) => Number(x.clicks.toFixed(2))),
-    monthlyImpressions: perf.monthly.map((x) => Number(x.impressions.toFixed(2))),
-    moverLabels: sixMonths.topIncreaseMost.slice(0, 8).map((x) => x.url),
-    moverValues: sixMonths.topIncreaseMost.slice(0, 8).map((x) => Number(x.delta.toFixed(2))),
+    dailyLabels: (perf.dailySeries || []).map((x) => x.date),
+    dailyClicks: (perf.dailySeries || []).map((x) => Number(x.clicks.toFixed(2))),
+    dailyImpressions: (perf.dailySeries || []).map((x) => Number(x.impressions.toFixed(2))),
+    monthlyLabels: (perf.monthly || []).map((x) => x.month),
+    monthlyClicks: (perf.monthly || []).map((x) => Number(x.clicks.toFixed(2))),
+    monthlyImpressions: (perf.monthly || []).map((x) => Number(x.impressions.toFixed(2))),
+    moverLabels: (sixMonths.topIncreaseMost || []).slice(0, 8).map((x) => x.url),
+    moverValues: (sixMonths.topIncreaseMost || []).slice(0, 8).map((x) => Number(x.delta.toFixed(2))),
   };
 
   return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SEO Insight Report</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --bg-1: #f5f2e8;
-      --bg-2: #e8efe3;
-      --ink: #102027;
-      --muted: #4f6272;
-      --accent: #156064;
-      --accent-soft: #b8d8d8;
-      --warm: #ff7b54;
-      --up: #1f7a1f;
-      --down: #b33636;
-      --flat: #6a7280;
-      --card: rgba(255, 255, 255, 0.8);
-      --line: rgba(0, 0, 0, 0.08);
-    }
-
-    * { box-sizing: border-box; }
-
-    body {
-      margin: 0;
-      font-family: "IBM Plex Sans", sans-serif;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at 8% 12%, rgba(255, 123, 84, 0.28), transparent 28%),
-        radial-gradient(circle at 86% 4%, rgba(21, 96, 100, 0.2), transparent 32%),
-        linear-gradient(140deg, var(--bg-1), var(--bg-2));
-    }
-
-    .wrapper {
-      width: min(1220px, 95vw);
-      margin: 0 auto;
-      padding: 28px 0 60px;
-    }
-
-    header {
-      background: linear-gradient(120deg, rgba(16, 32, 39, 0.95), rgba(21, 96, 100, 0.86));
-      color: #fff;
-      border-radius: 20px;
-      padding: 28px;
-      margin-bottom: 18px;
-      position: relative;
-      overflow: hidden;
-      box-shadow: 0 18px 40px rgba(12, 22, 26, 0.25);
-    }
-
-    header::after {
-      content: "";
-      width: 220px;
-      height: 220px;
-      border-radius: 999px;
-      background: rgba(255, 123, 84, 0.22);
-      position: absolute;
-      right: -40px;
-      top: -80px;
-      transform: rotate(18deg);
-    }
-
-    h1, h2, h3 {
-      font-family: "Space Grotesk", sans-serif;
-      letter-spacing: -0.01em;
-      margin: 0;
-    }
-
-    h1 { font-size: clamp(1.4rem, 3vw, 2rem); }
-    h2 { font-size: clamp(1.1rem, 2.4vw, 1.4rem); margin-bottom: 10px; }
-
-    .meta {
-      margin-top: 8px;
-      color: rgba(255, 255, 255, 0.9);
-      font-size: 0.95rem;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 14px;
-      position: relative;
-      z-index: 2;
-    }
-
-    section {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 18px;
-      margin-top: 16px;
-      backdrop-filter: blur(8px);
-    }
-
-    .cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-      gap: 12px;
-    }
-
-    .metric-card {
-      background: rgba(255,255,255,0.85);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 14px;
-    }
-
-    .metric-head p {
-      margin: 4px 0 10px;
-      color: var(--muted);
-      font-size: 0.85rem;
-    }
-
-    .metric-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-
-    .metric-grid span {
-      color: var(--muted);
-      font-size: 0.8rem;
-      display: block;
-    }
-
-    .metric-grid strong {
-      font-size: 1.1rem;
-      display: block;
-      margin-top: 2px;
-    }
-
-    .metric-grid small {
-      font-size: 0.8rem;
-      display: block;
-      margin-top: 3px;
-    }
-
-    .up { color: var(--up); }
-    .down { color: var(--down); }
-    .flat { color: var(--flat); }
-
-    .topic-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin: 12px 0;
-    }
-
-    .topic-pill {
-      padding: 6px 10px;
-      border-radius: 999px;
-      font-size: 0.82rem;
-      border: 1px solid rgba(21, 96, 100, 0.24);
-      background: rgba(184, 216, 216, 0.42);
-    }
-
-    .two-col {
-      display: grid;
-      gap: 14px;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    }
-
-    .chart-box {
-      background: #fff;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 8px;
-      min-height: 280px;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.9rem;
-      background: #fff;
-      border-radius: 12px;
-      overflow: hidden;
-    }
-
-    th, td {
-      text-align: left;
-      border-bottom: 1px solid var(--line);
-      padding: 8px;
-      vertical-align: top;
-    }
-
-    th {
-      background: rgba(16, 32, 39, 0.94);
-      color: #fff;
-      font-weight: 600;
-      position: sticky;
-      top: 0;
-    }
-
-    td.url {
-      max-width: 360px;
-      word-break: break-word;
-      font-size: 0.85rem;
-    }
-
-    .muted {
-      color: var(--muted);
-      font-size: 0.88rem;
-    }
-
-    .empty {
-      color: var(--muted);
-      margin: 0;
-      padding: 6px 0;
-    }
-
-    .kpis {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 8px;
-      margin-top: 10px;
-    }
-
-    .kpi {
-      background: rgba(255,255,255,0.8);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 10px;
-    }
-
-    .kpi span {
-      display: block;
-      font-size: 0.8rem;
-      color: var(--muted);
-    }
-
-    .kpi strong {
-      font-size: 1rem;
-    }
-
-    .priority {
-      display: inline-block;
-      border-radius: 999px;
-      padding: 2px 8px;
-      font-size: 0.75rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      background: rgba(106, 114, 128, 0.16);
-    }
-
-    .priority-high { background: rgba(179, 54, 54, 0.16); color: var(--down); }
-    .priority-medium { background: rgba(255, 123, 84, 0.2); color: #8a3f1d; }
-    .priority-low { background: rgba(31, 122, 31, 0.14); color: var(--up); }
-
-    .note-box {
-      border-left: 4px solid var(--accent);
-      padding: 10px 12px;
-      background: rgba(184, 216, 216, 0.28);
-      border-radius: 10px;
-      color: var(--muted);
-    }
-
-    .report-actions {
-      margin-bottom: 16px;
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      justify-content: flex-start;
-      align-items: center;
-    }
-
-    .action-link,
-    .download-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      border-radius: 999px;
-      padding: 10px 14px;
-      color: #fff;
-      background: var(--accent);
-      font-weight: 700;
-      text-decoration: none;
-      box-shadow: 0 10px 24px rgba(21, 96, 100, 0.22);
-      border: 1px solid rgba(21, 96, 100, 0.1);
-    }
-
-    .action-link.secondary {
-      background: #fff;
-      color: var(--accent);
-      border-color: rgba(21, 96, 100, 0.28);
-      box-shadow: none;
-    }
-
-    .action-link.disabled {
-      background: rgba(106, 114, 128, 0.15);
-      color: var(--flat);
-      box-shadow: none;
-      cursor: not-allowed;
-    }
-
-    .action-link:hover,
-    .download-link:hover {
-      background: #0f4c50;
-      color: #fff;
-    }
-
-    .empty-table {
-      border: 1px dashed rgba(79, 98, 114, 0.35);
-      border-radius: 12px;
-      background: rgba(255,255,255,0.72);
-      padding: 16px;
-      color: var(--muted);
-    }
-
-    .empty-table strong {
-      display: block;
-      color: var(--ink);
-      margin-bottom: 4px;
-    }
-
-    .empty-table p { margin: 0; }
-
-    @media (max-width: 700px) {
-      .wrapper { width: 94vw; }
-      header, section { padding: 14px; }
-      th, td { font-size: 0.83rem; }
-    }
-  </style>
-</head>
-<body>
-  <div class="wrapper">
-    <div class="report-actions" aria-label="Report actions">
-      <a class="action-link secondary" href="/">Back to dashboard</a>
-      <a class="action-link" href="/reports/new">Create another report</a>
-      <span class="action-link disabled" aria-disabled="true">Download HTML (coming soon)</span>
-      ${keywordCsvDownloadUrl ? `<a class="download-link" href="${escapeHtml(keywordCsvDownloadUrl)}">Download keyword CSV</a>` : ""}
-    </div>
-    <header>
-      <h1>SEO Insight Report</h1>
-      <div class="meta">
-        <span>Generated: ${escapeHtml(insights.generatedAt)}</span>
-        <span>Source: ${escapeHtml(sourceInfo.label)}</span>
-        <span>Property: ${escapeHtml(sourceInfo.property)}</span>
-        <span>Date range: ${escapeHtml(sourceInfo.range ? `${sourceInfo.range.start} -> ${sourceInfo.range.end}` : "No date range")}</span>
-        <span>Data span: ${escapeHtml(insights.dataSpan ? `${insights.dataSpan.start} -> ${insights.dataSpan.end}` : "No data")}</span>
-      </div>
-    </header>
-
-    <section>
-      <h2>Summary Cards (Week / Month / 3M / 6M)</h2>
-      <div class="cards">${insights.periodCards.map((card) => periodCardHtml(card)).join("\n")}</div>
-    </section>
-
-    <section>
-      <h2>Active Filters</h2>
-      ${dataDelayNote ? `<p class="note-box" style="margin-bottom:10px;">${escapeHtml(dataDelayNote)}</p>` : ""}
-      <div class="kpis">
-        <div class="kpi"><span>Property</span><strong>${escapeHtml(sourceInfo.property || "—")}</strong></div>
-        <div class="kpi"><span>Search type</span><strong>${escapeHtml(filters.searchType || "web")}</strong></div>
-        <div class="kpi"><span>Date range</span><strong>${escapeHtml(sourceInfo.range ? `${sourceInfo.range.start} -> ${sourceInfo.range.end}` : "—")}</strong></div>
-        <div class="kpi"><span>Report period</span><strong>${escapeHtml(filters.reportPeriodLabel || filters.reportPeriod || "custom")}</strong></div>
-        <div class="kpi"><span>Page contains filter</span><strong>${escapeHtml(filters.pageContains || "None")}</strong></div>
-        <div class="kpi"><span>Tracked keyword count</span><strong>${formatNumber(filters.trackedKeywordCount || 0)}</strong></div>
-        <div class="kpi"><span>SEO alert count</span><strong>${formatNumber(filters.seoAlertCount || seoAlerts.length || 0)}</strong></div>
-        <div class="kpi"><span>High-severity alerts</span><strong>${formatNumber(filters.highSeveritySeoAlertCount || seoAlerts.filter((alert) => alert.severity === "high").length || 0)}</strong></div>
-      </div>
-      <p class="note-box" style="margin-top:10px;">For average position, lower is better.</p>
-    </section>
-
-    ${renderEmptyReportSection({ sourceInfo, filters, diagnostics })}
-
-    <section>
-      <h2>GSC Diagnostics</h2>
-      ${diagnostics.emptyDataWarning ? `<p class="note-box" style="border-color: rgba(179,54,54,.25); background: rgba(179,54,54,.08);">${escapeHtml(diagnostics.emptyDataWarning)}</p>` : ""}
-      ${diagnostics.contentMetadataWarning ? `<p class="note-box" style="margin-top:8px;">${escapeHtml(diagnostics.contentMetadataWarning)}</p>` : ""}
-      <div class="kpis">
-        <div class="kpi"><span>Raw page rows</span><strong>${formatNumber(diagnostics.pageRowCount || 0)}</strong></div>
-        <div class="kpi"><span>Coalesced page rows</span><strong>${formatNumber(diagnostics.coalescedPageRowCount || 0)}</strong></div>
-        <div class="kpi"><span>Keyword rows</span><strong>${formatNumber(diagnostics.keywordRowCount || 0)}</strong></div>
-        <div class="kpi"><span>Content rows</span><strong>${formatNumber(diagnostics.contentMetadataRowCount || 0)}</strong></div>
-        <div class="kpi"><span>GSC delay days</span><strong>${diagnostics.gscDataDelayDays ?? "—"}</strong></div>
-        <div class="kpi"><span>Diagnostic search type</span><strong>${escapeHtml(diagnostics.searchType || filters.searchType || "web")}</strong></div>
-        <div class="kpi"><span>Page filter applied</span><strong>${yesNo(Boolean(diagnostics.pageContainsApplied ?? filters.pageContains))}</strong></div>
-      </div>
-    </section>
-
-    <section>
-      <h2>This Month Content Publishing</h2>
-      <p class="muted">${publishing.range.start} -> ${publishing.range.end} | Published articles: <strong>${publishing.count}</strong></p>
-      <div class="topic-list">
-        ${publishing.topics.length ? publishing.topics.map((x) => `<span class="topic-pill">${escapeHtml(x.topic)}: ${x.count}</span>`).join("") : "<span class=\"topic-pill\">No topic data</span>"}
-      </div>
-      ${rowsToTable(publishing.items, {
-        header: "<tr><th>#</th><th>Publish Date</th><th>Topic</th><th>Title</th><th>URL</th></tr>",
-        row: (item, idx) => `<tr><td>${idx + 1}</td><td>${escapeHtml(item.publishedDate)}</td><td>${escapeHtml(item.topic)}</td><td>${escapeHtml(item.title || "")}</td><td class=\"url\"><a href=\"${escapeHtml(item.url)}\" target=\"_blank\" rel=\"noopener noreferrer\">${escapeHtml(item.url)}</a></td></tr>`,
-      })}
-    </section>
-
-    <section>
-      <h2>SEO Performance - Last 3 Months</h2>
-      <div class="kpis">
-        <div class="kpi"><span>Total Clicks</span><strong>${formatNumber(perf.total.clicks)}</strong></div>
-        <div class="kpi"><span>Total Impressions</span><strong>${formatNumber(perf.total.impressions)}</strong></div>
-        <div class="kpi"><span>CTR</span><strong>${formatPct(perf.total.ctr)}</strong></div>
-        <div class="kpi"><span>Avg Position</span><strong>${Number(perf.total.position || 0).toFixed(2)}</strong></div>
-      </div>
-      <div class="two-col" style="margin-top: 12px;">
-        <div class="chart-box"><canvas id="dailyChart"></canvas></div>
-        <div class="chart-box"><canvas id="monthlyChart"></canvas></div>
-      </div>
-    </section>
-
-    <section>
-      <h2>GSC-style Insight: Trending Up / Down (30 Days)</h2>
-      <div class="two-col">
-        <div>
-          <h3 style="margin-bottom:8px;">Trending Up</h3>
-          ${rowsToTable(trend30.trendingUp, {
-            header: "<tr><th>#</th><th>URL</th><th>Clicks Δ</th><th>Clicks %</th><th>Current</th><th>Previous</th></tr>",
-            row: (item, idx) => `<tr><td>${idx + 1}</td><td class=\"url\">${escapeHtml(item.url)}</td><td class=\"up\">${formatSigned(item.clickDelta)}</td><td>${escapeHtml(formatDeltaPercent(item.clickPct))}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatNumber(item.previousClicks)}</td></tr>`,
-          })}
-        </div>
-        <div>
-          <h3 style="margin-bottom:8px;">Trending Down</h3>
-          ${rowsToTable(trend30.trendingDown, {
-            header: "<tr><th>#</th><th>URL</th><th>Clicks Δ</th><th>Clicks %</th><th>Current</th><th>Previous</th></tr>",
-            row: (item, idx) => `<tr><td>${idx + 1}</td><td class=\"url\">${escapeHtml(item.url)}</td><td class=\"down\">${formatSigned(item.clickDelta)}</td><td>${escapeHtml(formatDeltaPercent(item.clickPct))}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatNumber(item.previousClicks)}</td></tr>`,
-          })}
-        </div>
-      </div>
-      <p class="muted" style="margin-top:8px;">Window compare: ${trend30.currentRange.start} -> ${trend30.currentRange.end} vs ${trend30.previousRange.start} -> ${trend30.previousRange.end}</p>
-    </section>
-
-    <section>
-      <h2>SEO Alerts</h2>
-      <p class="muted">Alerts are generated from high-impression ranking drops, tracked keyword losses, and CTR opportunities. Notification summaries are sent only for high-severity alerts when alerts are enabled.</p>
-      ${rowsToTable(seoAlerts, {
-        header: "<tr><th>Severity</th><th>Type</th><th>Title</th><th>Message</th><th>URL</th><th>Recommendation</th></tr>",
-        row: (item) => `<tr><td>${priorityBadge(item.severity)}</td><td>${escapeHtml(item.type)}</td><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.message)}</td><td class="url">${linkedUrl(item.url)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
-      })}
-    </section>
-
-    <section>
-      <h2>Tracked Keyword Ranking Movement</h2>
-      ${rowsToTable(trackedKeywordMovements, {
-        header: "<tr><th>Keyword</th><th>Match type</th><th>Best URL</th><th>Current position</th><th>Previous position</th><th>Position change</th><th>Current clicks</th><th>Click change</th><th>Current impressions</th><th>Impression change</th><th>Action hint</th></tr>",
-        row: (item) => `<tr><td>${escapeHtml(item.keyword)}</td><td>${escapeHtml(item.matchType)}</td><td class="url">${linkedUrl(item.bestCurrentUrl)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatPosition(item.previousAvgPosition)}</td><td class="${deltaClass(item.positionDelta)}">${item.positionDelta === null ? "—" : formatSigned(item.positionDelta, 2)}</td><td>${formatNumber(item.currentClicks)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td>${formatNumber(item.currentImpressions)}</td><td class="${deltaClass(item.impressionDelta)}">${formatSigned(item.impressionDelta)}</td><td>${escapeHtml(item.actionHint)}</td></tr>`,
-      })}
-    </section>
-
-    <section>
-      <h2>High Impression Keywords With Ranking Drop</h2>
-      ${rowsToTable(highImpressionDrops, {
-        header: "<tr><th>Query</th><th>URL</th><th>Current position</th><th>Previous position</th><th>Position loss</th><th>Current impressions</th><th>Current clicks</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
-        row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatPosition(item.previousAvgPosition)}</td><td class="down">${formatSigned(Math.abs(item.positionDelta || 0), 2)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatPct(item.currentCtr)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
-      })}
-    </section>
-
-    <section>
-      <h2>High Impression Keywords Near Page 1</h2>
-      ${rowsToTable(nearPageOneKeywords, {
-        header: "<tr><th>Query</th><th>URL</th><th>Position</th><th>Impressions</th><th>Clicks</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
-        row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatPct(item.currentCtr)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
-      })}
-    </section>
-
-    <section>
-      <h2>CTR Opportunity Keywords</h2>
-      ${rowsToTable(ctrOpportunities, {
-        header: "<tr><th>Query</th><th>URL</th><th>Position</th><th>Impressions</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
-        row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatPct(item.currentCtr)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
-      })}
-    </section>
-
-    <section>
-      <h2>Keyword Winners</h2>
-      ${rowsToTable(keywordWinners, {
-        header: "<tr><th>Query</th><th>URL</th><th>Current position</th><th>Position gain</th><th>Click change</th><th>Impression change</th><th>Priority</th><th>Recommendation</th></tr>",
-        row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td class="up">${item.positionDelta === null ? "—" : formatSigned(item.positionDelta, 2)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td class="${deltaClass(item.impressionDelta)}">${formatSigned(item.impressionDelta)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
-      })}
-    </section>
-
-    <section>
-      <h2>Gemini AI SEO Insights</h2>
-      ${geminiInsights.available ? `
-        <div class="two-col">
-          <div><h3>Executive Summary</h3>${aiList(geminiInsights.executiveSummary)}</div>
-          <div><h3>Key Risks</h3>${aiList(geminiInsights.risks)}</div>
-          <div><h3>Opportunities</h3>${aiList(geminiInsights.opportunities)}</div>
-          <div><h3>Content Refresh Ideas</h3>${rowsToTable(geminiInsights.contentRefreshIdeas || [], {
-            header: "<tr><th>URL</th><th>Reason</th><th>Suggested update</th></tr>",
-            row: (item) => `<tr><td class="url">${linkedUrl(item.url)}</td><td>${escapeHtml(item.reason)}</td><td>${escapeHtml(item.suggestedUpdate)}</td></tr>`,
-          })}</div>
-        </div>
-        <h3 style="margin-top:12px;">Recommended Actions</h3>
-        ${rowsToTable(geminiInsights.recommendedActions || [], {
-          header: "<tr><th>Priority</th><th>Title</th><th>Why</th><th>Action</th><th>Expected impact</th></tr>",
-          row: (item) => `<tr><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.why)}</td><td>${escapeHtml(item.action)}</td><td>${escapeHtml(item.expectedImpact)}</td></tr>`,
-        })}
-      ` : `<p class="empty">${escapeHtml(geminiInsights.message || "AI insight unavailable.")}</p>`}
-    </section>
-
-    <section>
-      <h2>URL Signals In 6 Months</h2>
-      <p class="muted">Month buckets: ${sixMonths.monthKeys.join(" | ")}</p>
-      <div class="two-col" style="margin-top:8px;">
-        <div>
-          <h3 style="margin-bottom:8px;">Top Increase (Most)</h3>
-          ${rowsToTable(sixMonths.topIncreaseMost, {
-            header: "<tr><th>#</th><th>URL</th><th>Δ Clicks</th><th>Start Month</th><th>Last Month</th></tr>",
-            row: (item, idx) => `<tr><td>${idx + 1}</td><td class=\"url\">${escapeHtml(item.url)}</td><td class=\"up\">${formatSigned(item.delta)}</td><td>${formatNumber(item.firstMonth)}</td><td>${formatNumber(item.lastMonth)}</td></tr>`,
-          })}
-        </div>
-        <div>
-          <h3 style="margin-bottom:8px;">Top Decrease (Most)</h3>
-          ${rowsToTable(sixMonths.topDecreaseMost, {
-            header: "<tr><th>#</th><th>URL</th><th>Δ Clicks</th><th>Start Month</th><th>Last Month</th></tr>",
-            row: (item, idx) => `<tr><td>${idx + 1}</td><td class=\"url\">${escapeHtml(item.url)}</td><td class=\"down\">${formatSigned(item.delta)}</td><td>${formatNumber(item.firstMonth)}</td><td>${formatNumber(item.lastMonth)}</td></tr>`,
-          })}
-        </div>
-      </div>
-      <div class="two-col" style="margin-top: 12px;">
-        <div>
-          <h3 style="margin-bottom:8px;">Fastest Increase (Trend Velocity)</h3>
-          ${rowsToTable(sixMonths.topIncreaseFast, {
-            header: "<tr><th>#</th><th>URL</th><th>Slope</th><th>Δ Clicks</th><th>Δ %</th></tr>",
-            row: (item, idx) => `<tr><td>${idx + 1}</td><td class=\"url\">${escapeHtml(item.url)}</td><td class=\"up\">${item.slope.toFixed(2)}</td><td>${formatSigned(item.delta)}</td><td>${escapeHtml(formatDeltaPercent(item.pct))}</td></tr>`,
-          })}
-        </div>
-        <div>
-          <h3 style="margin-bottom:8px;">Fastest Decrease (Trend Velocity)</h3>
-          ${rowsToTable(sixMonths.topDecreaseFast, {
-            header: "<tr><th>#</th><th>URL</th><th>Slope</th><th>Δ Clicks</th><th>Δ %</th></tr>",
-            row: (item, idx) => `<tr><td>${idx + 1}</td><td class=\"url\">${escapeHtml(item.url)}</td><td class=\"down\">${item.slope.toFixed(2)}</td><td>${formatSigned(item.delta)}</td><td>${escapeHtml(formatDeltaPercent(item.pct))}</td></tr>`,
-          })}
-        </div>
-      </div>
-      <div class="chart-box" style="margin-top: 12px;"><canvas id="moverChart"></canvas></div>
-    </section>
-  </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
-  <script>
-    const payload = ${JSON.stringify(chartPayload)};
-
-    const dailyCtx = document.getElementById("dailyChart");
-    const monthlyCtx = document.getElementById("monthlyChart");
-    const moverCtx = document.getElementById("moverChart");
-
-    new Chart(dailyCtx, {
-      type: "line",
-      data: {
-        labels: payload.dailyLabels,
-        datasets: [
-          {
-            label: "Clicks",
-            data: payload.dailyClicks,
-            borderColor: "#156064",
-            backgroundColor: "rgba(21, 96, 100, 0.18)",
-            yAxisID: "y",
-            tension: 0.28,
-            fill: true,
-          },
-          {
-            label: "Impressions",
-            data: payload.dailyImpressions,
-            borderColor: "#ff7b54",
-            backgroundColor: "rgba(255, 123, 84, 0.12)",
-            yAxisID: "y1",
-            tension: 0.24,
-            fill: true,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        interaction: { mode: "index", intersect: false },
-        scales: {
-          y: { type: "linear", position: "left", title: { display: true, text: "Clicks" } },
-          y1: { type: "linear", position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "Impressions" } },
-        },
-      },
-    });
-
-    new Chart(monthlyCtx, {
-      type: "bar",
-      data: {
-        labels: payload.monthlyLabels,
-        datasets: [
-          {
-            label: "Clicks",
-            data: payload.monthlyClicks,
-            backgroundColor: "rgba(21, 96, 100, 0.78)",
-          },
-          {
-            label: "Impressions",
-            data: payload.monthlyImpressions,
-            backgroundColor: "rgba(255, 123, 84, 0.6)",
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        plugins: {
-          legend: { position: "top" },
-        },
-      },
-    });
-
-    new Chart(moverCtx, {
-      type: "bar",
-      data: {
-        labels: payload.moverLabels,
-        datasets: [
-          {
-            label: "Clicks delta (Top increase - 6M)",
-            data: payload.moverValues,
-            backgroundColor: "rgba(42, 157, 143, 0.8)",
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        indexAxis: "y",
-        plugins: {
-          legend: { display: true },
-          tooltip: { callbacks: { title: (items) => items[0].label } },
-        },
-        scales: {
-          x: { title: { display: true, text: "Clicks delta" } },
-        },
-      },
-    });
-  </script>
-</body>
-</html>`;
+<html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SEO Insight Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg-1:#f5f2e8;--bg-2:#e8efe3;--ink:#102027;--muted:#4f6272;--accent:#156064;--accent-soft:#b8d8d8;--warm:#ff7b54;--up:#1f7a1f;--down:#b33636;--flat:#6a7280;--card:rgba(255,255,255,.8);--line:rgba(0,0,0,.08)}
+*{box-sizing:border-box}body{margin:0;font-family:"IBM Plex Sans",sans-serif;color:var(--ink);background:radial-gradient(circle at 8% 12%,rgba(255,123,84,.28),transparent 28%),radial-gradient(circle at 86% 4%,rgba(21,96,100,.2),transparent 32%),linear-gradient(140deg,var(--bg-1),var(--bg-2))}.wrapper{width:min(1220px,95vw);margin:0 auto;padding:28px 0 60px}header{background:linear-gradient(120deg,rgba(16,32,39,.95),rgba(21,96,100,.86));color:#fff;border-radius:20px;padding:28px;margin-bottom:18px;overflow:hidden;box-shadow:0 18px 40px rgba(12,22,26,.25)}h1,h2,h3{font-family:"Space Grotesk",sans-serif;letter-spacing:-.01em;margin:0}h1{font-size:clamp(1.4rem,3vw,2rem)}h2{font-size:clamp(1.1rem,2.4vw,1.4rem);margin-bottom:10px}h3{font-size:1rem;margin-bottom:8px}.meta{margin-top:8px;color:rgba(255,255,255,.9);font-size:.95rem;display:flex;flex-wrap:wrap;gap:14px}section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-top:16px;backdrop-filter:blur(8px)}.two-col{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px}.kpi{background:rgba(255,255,255,.8);border:1px solid var(--line);border-radius:12px;padding:10px}.kpi span{display:block;font-size:.8rem;color:var(--muted)}.kpi strong{font-size:1rem}.kpi small{display:block;margin-top:4px}.up{color:var(--up);font-weight:700}.down{color:var(--down);font-weight:700}.flat{color:var(--flat);font-weight:700}.chart-box{height:320px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}table{width:100%;border-collapse:collapse;background:rgba(255,255,255,.74);border-radius:12px;overflow:hidden}th,td{text-align:left;border-bottom:1px solid var(--line);padding:8px;vertical-align:top}th{background:rgba(16,32,39,.94);color:#fff;font-weight:600}td.url{max-width:360px;word-break:break-word;font-size:.85rem}.muted,.empty{color:var(--muted);font-size:.88rem}.note-box{border-left:4px solid var(--accent);padding:10px 12px;background:rgba(184,216,216,.28);border-radius:10px;color:var(--muted)}.note-box.danger{border-color:rgba(179,54,54,.45);background:rgba(179,54,54,.09)}.report-actions{margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap}.action-link,.download-link{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:10px 14px;color:#fff;background:var(--accent);font-weight:700;text-decoration:none;box-shadow:0 10px 24px rgba(21,96,100,.22);border:1px solid rgba(21,96,100,.1)}.action-link.secondary{background:#fff;color:var(--accent);border-color:rgba(21,96,100,.28);box-shadow:none}.action-link.disabled{background:rgba(106,114,128,.15);color:var(--flat);box-shadow:none;cursor:not-allowed}.empty-table{border:1px dashed rgba(79,98,114,.35);border-radius:12px;background:rgba(255,255,255,.72);padding:16px;color:var(--muted)}.empty-table strong{display:block;color:var(--ink);margin-bottom:4px}.priority{display:inline-block;border-radius:999px;padding:2px 8px;font-size:.75rem;font-weight:700;text-transform:uppercase;background:rgba(106,114,128,.16)}.priority-high{background:rgba(179,54,54,.16);color:var(--down)}.priority-medium{background:rgba(255,123,84,.2);color:#8a3f1d}.priority-low{background:rgba(31,122,31,.14);color:var(--up)}@media(max-width:700px){.wrapper{width:94vw}header,section{padding:14px}th,td{font-size:.83rem}.two-col{grid-template-columns:1fr}}
+</style></head><body><div class="wrapper">
+  <div class="report-actions" aria-label="Report actions"><a class="action-link secondary" href="/">Back to dashboard</a><a class="action-link" href="/reports/new">Create another report</a><span class="action-link disabled" aria-disabled="true">Download HTML (coming soon)</span>${keywordCsvDownloadUrl ? `<a class="download-link" href="${escapeHtml(keywordCsvDownloadUrl)}">Download keyword CSV</a>` : ""}</div>
+  <header><h1>SEO Insight Report</h1><div class="meta"><span>Generated: ${escapeHtml(insights.generatedAt)}</span><span>Source: ${escapeHtml(sourceInfo.label)}</span><span>Property: ${escapeHtml(sourceInfo.property)}</span><span>Date range: ${escapeHtml(rangeLabel(sourceInfo.range))}</span><span>Data span: ${escapeHtml(insights.dataSpan ? rangeLabel(insights.dataSpan) : "No data")}</span></div></header>
+  <section><h2>Active Filters</h2>${dataDelayNote ? `<p class="note-box" style="margin-bottom:10px;">${escapeHtml(dataDelayNote)}</p>` : ""}<div class="kpis"><div class="kpi"><span>Property</span><strong>${escapeHtml(sourceInfo.property || "—")}</strong></div><div class="kpi"><span>Search type</span><strong>${escapeHtml(filters.searchType || "web")}</strong></div><div class="kpi"><span>Date range</span><strong>${escapeHtml(rangeLabel(sourceInfo.range))}</strong></div><div class="kpi"><span>Fetched analysis range</span><strong>${escapeHtml(rangeLabel(diagnostics.queryRange))}</strong></div><div class="kpi"><span>Report period</span><strong>${escapeHtml(filters.reportPeriodLabel || filters.reportPeriod || "custom")}</strong></div><div class="kpi"><span>Page contains filter</span><strong>${escapeHtml(filters.pageContains || "None")}</strong></div><div class="kpi"><span>Tracked keyword count</span><strong>${formatNumber(filters.trackedKeywordCount || 0)}</strong></div></div></section>
+  ${renderEmptyReportSection({ sourceInfo, filters, diagnostics })}
+  ${renderGeminiInsights(geminiInsights)}
+  ${renderOverview(overview)}
+  ${renderPerformance3Months(perf)}
+  ${renderLast30Contribution(contribution)}
+  ${renderContentSnapshot(snapshot)}
+  ${renderUrlMovement(movement)}
+  ${renderKeywordSections(keywordInsights, keywordCsvDownloadUrl)}
+  ${render6MonthSignals(sixMonths)}
+  <section><h2>Appendix / Raw tables</h2>${insights.dataAvailabilityNotes?.length ? `<ul>${insights.dataAvailabilityNotes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : `<p class="empty">Enough fetched data is available for the core comparisons.</p>`}<div class="kpis"><div class="kpi"><span>Raw page rows</span><strong>${formatNumber(diagnostics.pageRowCount || 0)}</strong></div><div class="kpi"><span>Coalesced page rows</span><strong>${formatNumber(diagnostics.coalescedPageRowCount || 0)}</strong></div><div class="kpi"><span>Keyword rows</span><strong>${formatNumber(diagnostics.keywordRowCount || 0)}</strong></div><div class="kpi"><span>GSC delay days</span><strong>${diagnostics.gscDataDelayDays ?? "—"}</strong></div><div class="kpi"><span>Page filter applied</span><strong>${yesNo(Boolean(diagnostics.pageContainsApplied ?? filters.pageContains))}</strong></div></div><p class="muted">Report tables above are generated from compact GSC page and query summaries. Full raw GSC rows are not exposed to Gemini AI.</p></section>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+<script>
+const payload=${JSON.stringify(chartPayload)};
+const dailyCtx=document.getElementById("dailyChart");
+const monthlyCtx=document.getElementById("monthlyChart");
+const moverCtx=document.getElementById("moverChart");
+if(dailyCtx){new Chart(dailyCtx,{type:"line",data:{labels:payload.dailyLabels,datasets:[{label:"Clicks",data:payload.dailyClicks,borderColor:"#156064",backgroundColor:"rgba(21,96,100,.18)",yAxisID:"y",tension:.28,fill:true},{label:"Impressions",data:payload.dailyImpressions,borderColor:"#ff7b54",backgroundColor:"rgba(255,123,84,.12)",yAxisID:"y1",tension:.24,fill:true}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},scales:{y:{type:"linear",position:"left",title:{display:true,text:"Clicks"}},y1:{type:"linear",position:"right",grid:{drawOnChartArea:false},title:{display:true,text:"Impressions"}}}}});}
+if(monthlyCtx){new Chart(monthlyCtx,{type:"bar",data:{labels:payload.monthlyLabels,datasets:[{label:"Clicks",data:payload.monthlyClicks,backgroundColor:"rgba(21,96,100,.78)"},{label:"Impressions",data:payload.monthlyImpressions,backgroundColor:"rgba(255,123,84,.6)"}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"top"}}}});}
+if(moverCtx){new Chart(moverCtx,{type:"bar",data:{labels:payload.moverLabels,datasets:[{label:"Clicks delta (Top increase - 6M)",data:payload.moverValues,backgroundColor:"rgba(42,157,143,.8)"}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:"y",plugins:{legend:{display:true},tooltip:{callbacks:{title:(items)=>items[0].label}}},scales:{x:{title:{display:true,text:"Clicks delta"}}}}});}
+</script></body></html>`;
 }

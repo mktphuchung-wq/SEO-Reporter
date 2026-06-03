@@ -67,11 +67,11 @@ async function main() {
     gscKeyFile: args.keyFile || process.env.GOOGLE_APPLICATION_CREDENTIALS,
   };
 
-  const { rows, contentRows, sourceInfo } = await loadReportData(input);
+  const { rows, sourceInfo } = await loadReportData(input);
   const insights = buildSeoInsights({
     rows,
-    contentRows,
     endDate: input.endDate || sourceInfo.range?.end,
+    currentRange: sourceInfo.range,
   });
 
   const html = renderHtmlReport({
