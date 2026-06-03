@@ -44,16 +44,23 @@ GOOGLE_GSC_SCOPE=https://www.googleapis.com/auth/webmasters.readonly
 SESSION_SECRET=replace-with-a-random-local-secret
 ```
 
-Production OAuth is pinned to a single Vercel domain, regardless of preview host or environment overrides:
+Production requires `SESSION_SECRET` and `GOOGLE_REDIRECT_URI`. The app intentionally does **not** infer OAuth callbacks from request hosts in production, which keeps Google OAuth stable across Vercel preview/custom domains. Set `GOOGLE_REDIRECT_URI` to the exact callback already authorized on your Google OAuth client, for example `https://your-vercel-domain.example/auth/callback`. Local development can still use `GOOGLE_REDIRECT_URI=http://localhost:3000/auth/callback`, or omit it to let the app infer the local request host.
 
-```text
-Production app URL: https://seo-reporter-indol.vercel.app
-Production OAuth callback: https://seo-reporter-indol.vercel.app/auth/callback
+Internal access and production controls:
+
+```bash
+ALLOWED_EMAILS=you@example.com,teammate@example.com
+ALLOWED_DOMAINS=example.com
+ENABLE_DEBUG_ROUTES=false
+GEMINI_TIMEOUT_MS=12000
+MAX_AI_ROWS=100
+MAX_TRACKED_KEYWORDS=100
+GSC_CACHE_TTL_SECONDS=300
 ```
 
-Add only that production callback URL to the Google OAuth client's authorized redirect URIs for production. Local development can still use `GOOGLE_REDIRECT_URI=http://localhost:3000/auth/callback`.
+`ALLOWED_EMAILS` and `ALLOWED_DOMAINS` are comma- or newline-separated. If both are blank, the local app does not restrict authenticated Google accounts; for internal production deployments, set at least one allowlist value. After Google OAuth, the app stores only a safe session identity (`email` and `name`) and keeps Google tokens out of pages/responses. Debug routes such as `/debug/gsc-sites` return `404` unless `ENABLE_DEBUG_ROUTES=true`.
 
-Optional:
+Optional integrations:
 
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
@@ -72,7 +79,7 @@ SEO_ALERT_TRACKED_CLICK_LOSS_PERCENT=30
 SEO_ALERT_CTR_HIGH_IMPRESSIONS=1000
 ```
 
-`GEMINI_API_KEY` is optional. If it is not configured, the report still renders and shows an AI-unavailable note. SEO alerts can be enabled from the report form or globally with `SEO_ALERTS_ENABLED=true`; notification delivery requires either `SLACK_WEBHOOK_URL` or `ALERT_EMAIL_PROVIDER_URL` plus `ALERT_EMAIL_TO`. The `/generate` flow sends a summary only when at least one high-severity alert exists, such as a position loss of at least 3 with at least 500 impressions or a tracked keyword with a large click loss.
+`GEMINI_API_KEY` is optional. If it is not configured, times out, or fails, the report still renders and shows an AI-unavailable note. SEO alerts can be enabled from the report form or globally with `SEO_ALERTS_ENABLED=true`; notification delivery requires either `SLACK_WEBHOOK_URL` or `ALERT_EMAIL_PROVIDER_URL` plus `ALERT_EMAIL_TO`. The `/reports` async flow and legacy `/generate` fallback send a summary only when at least one high-severity alert exists, such as a position loss of at least 3 with at least 500 impressions or a tracked keyword with a large click loss.
 
 ## Local Test Instructions
 
@@ -111,7 +118,8 @@ To test the GSC reporting flow locally after OAuth environment variables are pre
 8. Optionally enter tracked keywords, one per line or separated by commas.
 9. Optionally enable Gemini AI insights if `GEMINI_API_KEY` is configured.
 10. Optionally enable SEO alerts after configuring Slack or email alert environment variables.
-11. Submit **Generate HTML Report**.
+11. Submit **Generate HTML Report**. The form posts to `POST /reports`, creates an in-memory job, and redirects immediately to `/reports/:id/status`.
+12. Wait for the auto-refreshing status page to show `completed`, then open `/reports/:id/view`.
 
 ## Report Sections
 
@@ -146,6 +154,8 @@ Output files are written to `output/` in local environments.
 ## Notes
 
 - This project remains an Express + Vercel serverless app for the SEO Reporter flow.
+- Report jobs and report caching are currently in memory so the app works locally and avoids blocking the initial request. This is not durable on Vercel serverless: cold starts, scale-out, and deployments can lose queued jobs/results/cache entries. Use Redis or Postgres for durable jobs, cache, and session/token storage before serious production use.
+- `POST /reports` is the preferred async report-generation route. `POST /generate` remains as a synchronous fallback for compatibility.
 - `api/index.js` continues to export the Express app for serverless usage.
 - `vercel.json` rewrites requests to the Express function, including `/`, `/auth/*`, and existing `/api/google/*` OAuth paths.
 - The legacy `/dashboard/integrations/google-search-console` path redirects to `/` so users land on the upgraded Express report builder.
