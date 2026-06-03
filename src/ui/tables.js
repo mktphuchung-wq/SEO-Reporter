@@ -1,4 +1,5 @@
-import { escapeHtml, renderEmptyState } from "./components.js";
+import { escapeHtml } from "./html.js";
+import { renderEmptyState } from "./components.js";
 
 export function renderTable({ columns = [], rows = [] } = {}) {
   if (!rows.length) {

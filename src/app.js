@@ -14,6 +14,7 @@ import { renderHomePage as renderDashboardHomePage } from "./pages/homePage.js";
 import { renderNewReportPage } from "./pages/newReportPage.js";
 import { renderSettingsPage } from "./pages/settingsPage.js";
 import { renderReportsPage } from "./pages/reportsPage.js";
+import { escapeHtml } from "./ui/html.js";
 import { buildKeywordInsightsCsv } from "./exporters/csvExport.js";
 import { filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
 import { query as dbQuery } from "./db/client.js";
@@ -472,15 +473,6 @@ function redactSensitiveValue(message) {
 
 function safeErrorMessage(error, fallback = "An error occurred.") {
   return redactSensitiveValue(error instanceof Error ? error.message : fallback);
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function safeJsonForHtml(value) {

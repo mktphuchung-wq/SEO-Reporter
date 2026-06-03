@@ -1,11 +1,5 @@
-export function escapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+import { escapeHtml } from "./html.js";
+export { escapeHtml } from "./html.js";
 
 const STATUS_TONES = {
   connected: "green",
