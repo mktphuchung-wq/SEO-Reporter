@@ -35,9 +35,26 @@ function deltaClass(value) {
   return numeric > 0 ? "up" : numeric < 0 ? "down" : "flat";
 }
 
+function formatUrlLabel(url) {
+  if (!url) return "—";
+
+  const normalized = String(url);
+  if (normalized.length <= 56) {
+    return normalized;
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    const pathLabel = `${parsed.pathname || "/"}${parsed.search || ""}`;
+    return pathLabel.length > 1 ? pathLabel : normalized;
+  } catch {
+    return normalized;
+  }
+}
+
 function linkedUrl(url) {
   if (!url) return "—";
-  return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
+  return `<a href="${escapeHtml(url)}" title="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(formatUrlLabel(url))}</a>`;
 }
 
 function priorityBadge(priority) {
@@ -62,7 +79,36 @@ function rowsToTable(items = [], mapper, emptyMessage = "The selected source, pe
     return `<div class="empty-table"><strong>No data available</strong><p>${escapeHtml(emptyMessage)}</p></div>`;
   }
 
-  return `<table><thead>${mapper.header}</thead><tbody>${items.map((item, index) => mapper.row(item, index)).join("\n")}</tbody></table>`;
+  return `<div class="table-scroll"><table><thead>${mapper.header}</thead><tbody>${items.map((item, index) => mapper.row(item, index)).join("\n")}</tbody></table></div>`;
+}
+
+function renderTabbedTables({ id, title, description, tabs = [] }) {
+  const safeId = String(id || "report-tabs").replace(/[^a-zA-Z0-9_-]/g, "-");
+  const safeTabs = tabs.filter((tab) => tab && tab.id && tab.label);
+
+  if (!safeTabs.length) {
+    return `<section><h2>${escapeHtml(title)}</h2><p class="empty">No table options are available for this section.</p></section>`;
+  }
+
+  const tabButtons = safeTabs.map((tab, index) => {
+    const tabId = `${safeId}-${tab.id}`;
+    const activeClass = index === 0 ? " active" : "";
+    const selected = index === 0 ? "true" : "false";
+    return `<button class="report-tab-button${activeClass}" type="button" data-tab-target="${escapeHtml(tabId)}" aria-controls="${escapeHtml(tabId)}" aria-selected="${selected}">${escapeHtml(tab.label)}</button>`;
+  }).join("");
+
+  const tabPanels = safeTabs.map((tab, index) => {
+    const tabId = `${safeId}-${tab.id}`;
+    const hidden = index === 0 ? "" : " hidden";
+    return `<div class="report-tab-panel" id="${escapeHtml(tabId)}" role="tabpanel"${hidden}>${tab.html || `<p class="empty">No table content is available for this option.</p>`}</div>`;
+  }).join("");
+
+  return `<section data-tab-group="${escapeHtml(safeId)}">
+    <h2>${escapeHtml(title)}</h2>
+    ${description ? `<p class="muted">${escapeHtml(description)}</p>` : ""}
+    <div class="report-tabs" role="tablist" aria-label="${escapeHtml(title)} options">${tabButtons}</div>
+    ${tabPanels}
+  </section>`;
 }
 
 function renderEmptyReportSection({ sourceInfo, filters, diagnostics }) {
@@ -107,8 +153,8 @@ function renderOverview(overview) {
 
 function urlComparisonTable(rows) {
   return rowsToTable(rows, {
-    header: "<tr><th>#</th><th>URL</th><th>Current clicks</th><th>Previous clicks</th><th>Click Δ</th><th>Click Δ %</th><th>Current impressions</th><th>Avg position</th><th>Position change</th></tr>",
-    row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatNumber(item.previousClicks)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td>${escapeHtml(formatDeltaPercent(item.clickPct))}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatPosition(item.currentPosition)}</td><td class="${deltaClass(item.positionChange)}">${formatSigned(item.positionChange, 2)}</td></tr>`,
+    header: "<tr><th>#</th><th>URL</th><th>Current clicks</th><th>Previous clicks</th><th>Click Δ</th><th>Current impressions</th><th>Avg position</th><th>Position change</th></tr>",
+    row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatNumber(item.previousClicks)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatPosition(item.currentPosition)}</td><td class="${deltaClass(item.positionChange)}">${formatSigned(item.positionChange, 2)}</td></tr>`,
   });
 }
 
@@ -128,14 +174,17 @@ function renderPerformance3Months(perf) {
       <div class="kpi"><span>Dropped to zero clicks</span><strong>${formatNumber(perf.growthCounts.droppedToZeroClicks)}</strong></div>
     </div>
     <div class="two-col" style="margin-top:12px;"><div class="chart-box"><canvas id="dailyChart"></canvas></div><div class="chart-box"><canvas id="monthlyChart"></canvas></div></div>
-    <h3 style="margin-top:14px;">Outstanding URLs In Current 3 Months</h3>
-    <div class="two-col" style="margin-top:8px;">
-      <div><h3>Top URLs by clicks</h3>${urlComparisonTable(perf.outstandingUrls.topByClicks)}</div>
-      <div><h3>Top URLs by impressions</h3>${urlComparisonTable(perf.outstandingUrls.topByImpressions)}</div>
-      <div><h3>Fastest growing URLs vs previous 3 months</h3>${urlComparisonTable(perf.outstandingUrls.fastestGrowing)}</div>
-      <div><h3>Fastest declining URLs vs previous 3 months</h3>${urlComparisonTable(perf.outstandingUrls.fastestDeclining)}</div>
-    </div>
-  </section>`;
+  </section>
+  ${renderTabbedTables({
+    id: "outstanding-urls-3-months",
+    title: "Outstanding URLs In Current 3 Months",
+    tabs: [
+      { id: "clicks", label: "By Clicks", html: urlComparisonTable(perf.outstandingUrls.topByClicks) },
+      { id: "impressions", label: "By Impressions", html: urlComparisonTable(perf.outstandingUrls.topByImpressions) },
+      { id: "fastest-growing", label: "Fastest Growing", html: urlComparisonTable(perf.outstandingUrls.fastestGrowing) },
+      { id: "fastest-declining", label: "Fastest Declining", html: urlComparisonTable(perf.outstandingUrls.fastestDeclining) },
+    ],
+  })}`;
 }
 
 function renderLast30Contribution(contribution) {
@@ -154,38 +203,52 @@ function renderLast30Contribution(contribution) {
 }
 
 function renderContentSnapshot(snapshot) {
-  return `<section>
-    <h2>Content Opportunity Snapshot</h2>
-    ${snapshot.note ? `<p class="note-box">${escapeHtml(snapshot.note)}</p>` : ""}
-    <div class="two-col">
-      <div><h3>Top Growing URLs</h3>${urlComparisonTable(snapshot.topGrowingUrls)}</div>
-      <div><h3>Top Declining URLs</h3>${urlComparisonTable(snapshot.topDecliningUrls)}</div>
-      <div><h3>High-Impression Low-CTR URLs</h3>${rowsToTable(snapshot.highImpressionLowCtr, {
-        header: "<tr><th>#</th><th>URL</th><th>Impressions</th><th>Clicks</th><th>CTR</th><th>Avg position</th><th>Recommendation</th></tr>",
-        row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatNumber(item.impressions)}</td><td>${formatNumber(item.clicks)}</td><td>${formatPct(item.ctr)}</td><td>${formatPosition(item.position)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
-      })}</div>
-      <div><h3>New/Rising URLs</h3>${urlComparisonTable(snapshot.newRisingUrls)}</div>
-    </div>
-  </section>`;
+  const lowCtrTable = rowsToTable(snapshot.highImpressionLowCtr, {
+    header: "<tr><th>#</th><th>URL</th><th>Impressions</th><th>Clicks</th><th>CTR</th><th>Avg position</th><th>Recommendation</th></tr>",
+    row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatNumber(item.impressions)}</td><td>${formatNumber(item.clicks)}</td><td>${formatPct(item.ctr)}</td><td>${formatPosition(item.position)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
+  });
+
+  return renderTabbedTables({
+    id: "content-opportunity-snapshot",
+    title: "Content Opportunity Snapshot",
+    description: snapshot.note || "Switch between URL opportunity views without rendering every wide table at once.",
+    tabs: [
+      { id: "growing-urls", label: "Growing URLs", html: urlComparisonTable(snapshot.topGrowingUrls) },
+      { id: "declining-urls", label: "Declining URLs", html: urlComparisonTable(snapshot.topDecliningUrls) },
+      { id: "low-ctr", label: "Low CTR", html: lowCtrTable },
+      { id: "new-rising-urls", label: "New/Rising URLs", html: urlComparisonTable(snapshot.newRisingUrls) },
+    ],
+  });
 }
 
 function movementTable(rows, emptyMessage) {
   return rowsToTable(rows, {
-    header: "<tr><th>#</th><th>URL</th><th>Clicks Δ</th><th>Impressions Δ</th><th>Current clicks</th><th>Previous clicks</th><th>Current impressions</th><th>Previous impressions</th></tr>",
-    row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td class="${deltaClass(item.impressionDelta)}">${formatSigned(item.impressionDelta)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatNumber(item.previousClicks)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatNumber(item.previousImpressions)}</td></tr>`,
+    header: "<tr><th>#</th><th>URL</th><th>Current clicks</th><th>Previous clicks</th><th>Click Δ</th><th>Current impressions</th><th>Avg position</th><th>Position change</th></tr>",
+    row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatNumber(item.previousClicks)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatPosition(item.currentPosition)}</td><td class="${deltaClass(item.positionChange)}">${formatSigned(item.positionChange, 2)}</td></tr>`,
   }, emptyMessage);
 }
 
 function renderUrlMovement(movement) {
-  return `<section>
-    <h2>GSC URL Movement - Last 30 Days vs Previous 30 Days</h2>
-    ${movement.hasPreviousData ? "" : `<p class="note-box">Previous 30-day comparison may be limited by fetched data range.</p>`}
-    <p class="muted">Window compare: ${escapeHtml(rangeLabel(movement.currentRange))} vs ${escapeHtml(rangeLabel(movement.previousRange))}</p>
-    <div class="two-col">
-      <div><h3>Trending Up</h3>${movementTable(movement.trendingUp)}</div>
-      <div><h3>Trending Down</h3>${movement.trendingDown.length ? movementTable(movement.trendingDown) : `<p class="note-box">${escapeHtml(movement.emptyDeclineMessage)}</p><h3 style="margin-top:10px;">Small Declines</h3>${movementTable(movement.smallDeclines, "No meaningful declines detected for this filter.")}`}</div>
-    </div>
-  </section>`;
+  const note = [
+    movement.hasPreviousData ? "" : "Previous 30-day comparison may be limited by fetched data range.",
+    `Window compare: ${rangeLabel(movement.currentRange)} vs ${rangeLabel(movement.previousRange)}`,
+  ].filter(Boolean).join(" ");
+
+  return renderTabbedTables({
+    id: "gsc-url-movement-30-days",
+    title: "GSC URL Movement - Last 30 Days vs Previous 30 Days",
+    description: note,
+    tabs: [
+      { id: "trending-up", label: "Trending Up", html: movementTable(movement.trendingUp) },
+      {
+        id: "trending-down",
+        label: "Trending Down",
+        html: movement.trendingDown.length
+          ? movementTable(movement.trendingDown)
+          : `<p class="note-box">${escapeHtml(movement.emptyDeclineMessage)}</p>${movementTable(movement.smallDeclines, "No meaningful declines detected for this filter.")}`,
+      },
+    ],
+  });
 }
 
 function renderGeminiInsights(geminiInsights) {
@@ -222,6 +285,13 @@ function renderGeminiInsights(geminiInsights) {
   </section>`;
 }
 
+function keywordOpportunityTable(rows, { queryKey = "query", urlKey = "url", positionKey = "currentAvgPosition", impressionsKey = "currentImpressions", clicksKey = "currentClicks", ctrKey = "currentCtr", priorityKey = "priority", recommendationKey = "recommendation" } = {}) {
+  return rowsToTable(rows, {
+    header: "<tr><th>Query</th><th>URL</th><th>Position</th><th>Impressions</th><th>Clicks</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
+    row: (item) => `<tr><td>${escapeHtml(item[queryKey])}</td><td class="url">${linkedUrl(item[urlKey])}</td><td>${formatPosition(item[positionKey])}</td><td>${formatNumber(item[impressionsKey])}</td><td>${formatNumber(item[clicksKey])}</td><td>${formatPct(item[ctrKey])}</td><td>${priorityBadge(item[priorityKey] || "medium")}</td><td>${escapeHtml(item[recommendationKey] || item.actionHint || "Review this opportunity and prioritize next SEO action.")}</td></tr>`,
+  });
+}
+
 function renderKeywordSections(keywordInsights, keywordCsvDownloadUrl) {
   const trackedKeywordMovements = keywordInsights.trackedKeywordMovements || [];
   const highImpressionDrops = keywordInsights.highImpressionDrops || [];
@@ -233,30 +303,22 @@ function renderKeywordSections(keywordInsights, keywordCsvDownloadUrl) {
     return `<section><h2>Keyword / Query Opportunities</h2><p class="empty">No keyword/query opportunity data is available for this report.</p></section>`;
   }
 
-  return `<section>
-    <h2>Keyword / Query Opportunities</h2>
-    ${keywordCsvDownloadUrl ? `<p><a class="download-link" href="${escapeHtml(keywordCsvDownloadUrl)}">Download keyword CSV</a></p>` : ""}
-    <h3>Tracked Keyword Ranking Movement</h3>${rowsToTable(trackedKeywordMovements, {
-      header: "<tr><th>Keyword</th><th>Match type</th><th>Best URL</th><th>Current position</th><th>Previous position</th><th>Position change</th><th>Current clicks</th><th>Click change</th><th>Action hint</th></tr>",
-      row: (item) => `<tr><td>${escapeHtml(item.keyword)}</td><td>${escapeHtml(item.matchType)}</td><td class="url">${linkedUrl(item.bestCurrentUrl)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatPosition(item.previousAvgPosition)}</td><td class="${deltaClass(item.positionDelta)}">${item.positionDelta === null ? "—" : formatSigned(item.positionDelta, 2)}</td><td>${formatNumber(item.currentClicks)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td>${escapeHtml(item.actionHint)}</td></tr>`,
-    })}
-    <h3 style="margin-top:12px;">High Impression Keywords With Ranking Drop</h3>${rowsToTable(highImpressionDrops, {
-      header: "<tr><th>Query</th><th>URL</th><th>Current position</th><th>Previous position</th><th>Current impressions</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
-      row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatPosition(item.previousAvgPosition)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatPct(item.currentCtr)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
-    })}
-    <h3 style="margin-top:12px;">High Impression Keywords Near Page 1</h3>${rowsToTable(nearPageOneKeywords, {
-      header: "<tr><th>Query</th><th>URL</th><th>Position</th><th>Impressions</th><th>Clicks</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
-      row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatPct(item.currentCtr)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
-    })}
-    <h3 style="margin-top:12px;">CTR Opportunity Keywords</h3>${rowsToTable(ctrOpportunities, {
-      header: "<tr><th>Query</th><th>URL</th><th>Position</th><th>Impressions</th><th>CTR</th><th>Priority</th><th>Recommendation</th></tr>",
-      row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatPct(item.currentCtr)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
-    })}
-    <h3 style="margin-top:12px;">Keyword Winners</h3>${rowsToTable(keywordWinners, {
-      header: "<tr><th>Query</th><th>URL</th><th>Current position</th><th>Position gain</th><th>Click change</th><th>Priority</th><th>Recommendation</th></tr>",
-      row: (item) => `<tr><td>${escapeHtml(item.query)}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatPosition(item.currentAvgPosition)}</td><td class="up">${item.positionDelta === null ? "—" : formatSigned(item.positionDelta, 2)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.recommendation)}</td></tr>`,
-    })}
-  </section>`;
+  return renderTabbedTables({
+    id: "keyword-query-opportunities",
+    title: "Keyword / Query Opportunities",
+    description: keywordCsvDownloadUrl ? "Use the tabs to review one keyword table at a time, or download the CSV for the full export." : "Use the tabs to review one keyword table at a time.",
+    tabs: [
+      {
+        id: "tracked-keywords",
+        label: "Tracked Keywords",
+        html: `${keywordCsvDownloadUrl ? `<p><a class="download-link" href="${escapeHtml(keywordCsvDownloadUrl)}">Download keyword CSV</a></p>` : ""}${keywordOpportunityTable(trackedKeywordMovements, { queryKey: "keyword", urlKey: "bestCurrentUrl", recommendationKey: "actionHint" })}`,
+      },
+      { id: "ranking-drops", label: "Ranking Drops", html: keywordOpportunityTable(highImpressionDrops) },
+      { id: "near-page-1", label: "Near Page 1", html: keywordOpportunityTable(nearPageOneKeywords) },
+      { id: "ctr-opportunities", label: "CTR Opportunities", html: keywordOpportunityTable(ctrOpportunities) },
+      { id: "winners", label: "Winners", html: keywordOpportunityTable(keywordWinners) },
+    ],
+  });
 }
 
 function render6MonthSignals(sixMonths) {
@@ -310,7 +372,7 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, k
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{--bg-1:#f5f2e8;--bg-2:#e8efe3;--ink:#102027;--muted:#4f6272;--accent:#156064;--accent-soft:#b8d8d8;--warm:#ff7b54;--up:#1f7a1f;--down:#b33636;--flat:#6a7280;--card:rgba(255,255,255,.8);--line:rgba(0,0,0,.08)}
-*{box-sizing:border-box}body{margin:0;font-family:"IBM Plex Sans",sans-serif;color:var(--ink);background:radial-gradient(circle at 8% 12%,rgba(255,123,84,.28),transparent 28%),radial-gradient(circle at 86% 4%,rgba(21,96,100,.2),transparent 32%),linear-gradient(140deg,var(--bg-1),var(--bg-2))}.wrapper{width:min(1220px,95vw);margin:0 auto;padding:28px 0 60px}header{background:linear-gradient(120deg,rgba(16,32,39,.95),rgba(21,96,100,.86));color:#fff;border-radius:20px;padding:28px;margin-bottom:18px;overflow:hidden;box-shadow:0 18px 40px rgba(12,22,26,.25)}h1,h2,h3{font-family:"Space Grotesk",sans-serif;letter-spacing:-.01em;margin:0}h1{font-size:clamp(1.4rem,3vw,2rem)}h2{font-size:clamp(1.1rem,2.4vw,1.4rem);margin-bottom:10px}h3{font-size:1rem;margin-bottom:8px}.meta{margin-top:8px;color:rgba(255,255,255,.9);font-size:.95rem;display:flex;flex-wrap:wrap;gap:14px}section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-top:16px;backdrop-filter:blur(8px)}.two-col{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px}.kpi{background:rgba(255,255,255,.8);border:1px solid var(--line);border-radius:12px;padding:10px}.kpi span{display:block;font-size:.8rem;color:var(--muted)}.kpi strong{font-size:1rem}.kpi small{display:block;margin-top:4px}.up{color:var(--up);font-weight:700}.down{color:var(--down);font-weight:700}.flat{color:var(--flat);font-weight:700}.chart-box{height:320px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}table{width:100%;border-collapse:collapse;background:rgba(255,255,255,.74);border-radius:12px;overflow:hidden}th,td{text-align:left;border-bottom:1px solid var(--line);padding:8px;vertical-align:top}th{background:rgba(16,32,39,.94);color:#fff;font-weight:600}td.url{max-width:360px;word-break:break-word;font-size:.85rem}.muted,.empty{color:var(--muted);font-size:.88rem}.note-box{border-left:4px solid var(--accent);padding:10px 12px;background:rgba(184,216,216,.28);border-radius:10px;color:var(--muted)}.note-box.danger{border-color:rgba(179,54,54,.45);background:rgba(179,54,54,.09)}.report-actions{margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap}.action-link,.download-link{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:10px 14px;color:#fff;background:var(--accent);font-weight:700;text-decoration:none;box-shadow:0 10px 24px rgba(21,96,100,.22);border:1px solid rgba(21,96,100,.1)}.action-link.secondary{background:#fff;color:var(--accent);border-color:rgba(21,96,100,.28);box-shadow:none}.action-link.disabled{background:rgba(106,114,128,.15);color:var(--flat);box-shadow:none;cursor:not-allowed}.empty-table{border:1px dashed rgba(79,98,114,.35);border-radius:12px;background:rgba(255,255,255,.72);padding:16px;color:var(--muted)}.empty-table strong{display:block;color:var(--ink);margin-bottom:4px}.priority{display:inline-block;border-radius:999px;padding:2px 8px;font-size:.75rem;font-weight:700;text-transform:uppercase;background:rgba(106,114,128,.16)}.priority-high{background:rgba(179,54,54,.16);color:var(--down)}.priority-medium{background:rgba(255,123,84,.2);color:#8a3f1d}.priority-low{background:rgba(31,122,31,.14);color:var(--up)}@media(max-width:700px){.wrapper{width:94vw}header,section{padding:14px}th,td{font-size:.83rem}.two-col{grid-template-columns:1fr}}
+*{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden}body{margin:0;font-family:"IBM Plex Sans",sans-serif;color:var(--ink);background:radial-gradient(circle at 8% 12%,rgba(255,123,84,.28),transparent 28%),radial-gradient(circle at 86% 4%,rgba(21,96,100,.2),transparent 32%),linear-gradient(140deg,var(--bg-1),var(--bg-2))}.wrapper{width:min(1220px,95vw);margin:0 auto;padding:28px 0 60px}header{background:linear-gradient(120deg,rgba(16,32,39,.95),rgba(21,96,100,.86));color:#fff;border-radius:20px;padding:28px;margin-bottom:18px;overflow:hidden;box-shadow:0 18px 40px rgba(12,22,26,.25)}h1,h2,h3{font-family:"Space Grotesk",sans-serif;letter-spacing:-.01em;margin:0}h1{font-size:clamp(1.4rem,3vw,2rem)}h2{font-size:clamp(1.1rem,2.4vw,1.4rem);margin-bottom:10px}h3{font-size:1rem;margin-bottom:8px}.meta{margin-top:8px;color:rgba(255,255,255,.9);font-size:.95rem;display:flex;flex-wrap:wrap;gap:14px}section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-top:16px;backdrop-filter:blur(8px);max-width:100%;overflow:hidden}.two-col{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px}.kpi{background:rgba(255,255,255,.8);border:1px solid var(--line);border-radius:12px;padding:10px}.kpi span{display:block;font-size:.8rem;color:var(--muted)}.kpi strong{font-size:1rem}.kpi small{display:block;margin-top:4px}.up{color:var(--up);font-weight:700}.down{color:var(--down);font-weight:700}.flat{color:var(--flat);font-weight:700}.chart-box{height:320px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}.table-scroll{overflow-x:auto;max-width:100%;border-radius:12px}.table-scroll table{min-width:880px}table{width:100%;border-collapse:collapse;background:rgba(255,255,255,.74);border-radius:12px;overflow:hidden}th,td{text-align:left;border-bottom:1px solid var(--line);padding:8px;vertical-align:top}th{background:rgba(16,32,39,.94);color:#fff;font-weight:600}td.url{width:34%;max-width:340px;word-break:break-word;overflow-wrap:anywhere;font-size:.84rem;line-height:1.35}td.url a{color:var(--accent);font-weight:600;text-decoration:none}.muted,.empty{color:var(--muted);font-size:.88rem}.note-box{border-left:4px solid var(--accent);padding:10px 12px;background:rgba(184,216,216,.28);border-radius:10px;color:var(--muted)}.note-box.danger{border-color:rgba(179,54,54,.45);background:rgba(179,54,54,.09)}.report-actions{margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap}.action-link,.download-link{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:10px 14px;color:#fff;background:var(--accent);font-weight:700;text-decoration:none;box-shadow:0 10px 24px rgba(21,96,100,.22);border:1px solid rgba(21,96,100,.1)}.action-link.secondary{background:#fff;color:var(--accent);border-color:rgba(21,96,100,.28);box-shadow:none}.action-link.disabled{background:rgba(106,114,128,.15);color:var(--flat);box-shadow:none;cursor:not-allowed}.empty-table{border:1px dashed rgba(79,98,114,.35);border-radius:12px;background:rgba(255,255,255,.72);padding:16px;color:var(--muted)}.empty-table strong{display:block;color:var(--ink);margin-bottom:4px}.priority{display:inline-block;border-radius:999px;padding:2px 8px;font-size:.75rem;font-weight:700;text-transform:uppercase;background:rgba(106,114,128,.16)}.priority-high{background:rgba(179,54,54,.16);color:var(--down)}.priority-medium{background:rgba(255,123,84,.2);color:#8a3f1d}.priority-low{background:rgba(31,122,31,.14);color:var(--up)}.report-tabs{display:flex;gap:8px;margin:14px 0 12px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}.report-tab-button{appearance:none;border:1px solid rgba(21,96,100,.28);border-radius:999px;background:#fff;color:var(--accent);cursor:pointer;flex:0 0 auto;font:700 .88rem "IBM Plex Sans",sans-serif;padding:9px 14px;transition:background .18s ease,color .18s ease,box-shadow .18s ease}.report-tab-button.active{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 8px 18px rgba(21,96,100,.22)}.report-tab-button:focus-visible{outline:3px solid rgba(255,123,84,.45);outline-offset:2px}.report-tab-panel{max-width:100%}.report-tab-panel[hidden]{display:none!important}@media(max-width:700px){.wrapper{width:94vw;padding-top:16px}header,section{padding:14px}.two-col{grid-template-columns:1fr}.kpis{grid-template-columns:1fr}.report-tabs{margin-left:-2px;margin-right:-2px;padding:0 2px 6px}.report-tab-button{padding:8px 12px;font-size:.84rem}th,td{font-size:.83rem;padding:7px}.table-scroll table{min-width:760px}td.url{max-width:240px;font-size:.84rem}.chart-box{height:260px}}
 </style></head><body><div class="wrapper">
   <div class="report-actions" aria-label="Report actions"><a class="action-link secondary" href="/">Back to dashboard</a><a class="action-link" href="/reports/new">Create another report</a><span class="action-link disabled" aria-disabled="true">Download HTML (coming soon)</span>${keywordCsvDownloadUrl ? `<a class="download-link" href="${escapeHtml(keywordCsvDownloadUrl)}">Download keyword CSV</a>` : ""}</div>
   <header><h1>SEO Insight Report</h1><div class="meta"><span>Generated: ${escapeHtml(insights.generatedAt)}</span><span>Source: ${escapeHtml(sourceInfo.label)}</span><span>Property: ${escapeHtml(sourceInfo.property)}</span><span>Date range: ${escapeHtml(rangeLabel(sourceInfo.range))}</span><span>Data span: ${escapeHtml(insights.dataSpan ? rangeLabel(insights.dataSpan) : "No data")}</span></div></header>
@@ -335,5 +397,18 @@ const moverCtx=document.getElementById("moverChart");
 if(dailyCtx){new Chart(dailyCtx,{type:"line",data:{labels:payload.dailyLabels,datasets:[{label:"Clicks",data:payload.dailyClicks,borderColor:"#156064",backgroundColor:"rgba(21,96,100,.18)",yAxisID:"y",tension:.28,fill:true},{label:"Impressions",data:payload.dailyImpressions,borderColor:"#ff7b54",backgroundColor:"rgba(255,123,84,.12)",yAxisID:"y1",tension:.24,fill:true}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},scales:{y:{type:"linear",position:"left",title:{display:true,text:"Clicks"}},y1:{type:"linear",position:"right",grid:{drawOnChartArea:false},title:{display:true,text:"Impressions"}}}}});}
 if(monthlyCtx){new Chart(monthlyCtx,{type:"bar",data:{labels:payload.monthlyLabels,datasets:[{label:"Clicks",data:payload.monthlyClicks,backgroundColor:"rgba(21,96,100,.78)"},{label:"Impressions",data:payload.monthlyImpressions,backgroundColor:"rgba(255,123,84,.6)"}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"top"}}}});}
 if(moverCtx){new Chart(moverCtx,{type:"bar",data:{labels:payload.moverLabels,datasets:[{label:"Clicks delta (Top increase - 6M)",data:payload.moverValues,backgroundColor:"rgba(42,157,143,.8)"}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:"y",plugins:{legend:{display:true},tooltip:{callbacks:{title:(items)=>items[0].label}}},scales:{x:{title:{display:true,text:"Clicks delta"}}}}});}
+document.querySelectorAll("[data-tab-group]").forEach((group)=>{
+  const buttons=Array.from(group.querySelectorAll("[data-tab-target]"));
+  const panels=Array.from(group.querySelectorAll(".report-tab-panel"));
+  buttons.forEach((button)=>{
+    button.addEventListener("click",()=>{
+      const targetId=button.getAttribute("data-tab-target");
+      buttons.forEach((item)=>{item.classList.remove("active");item.setAttribute("aria-selected","false");});
+      panels.forEach((panel)=>{panel.hidden=panel.id!==targetId;});
+      button.classList.add("active");
+      button.setAttribute("aria-selected","true");
+    });
+  });
+});
 </script></body></html>`;
 }
