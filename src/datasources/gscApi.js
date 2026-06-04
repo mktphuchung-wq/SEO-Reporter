@@ -100,6 +100,22 @@ function buildPageContainsFilter(pageContains) {
   ];
 }
 
+function appendNormalizedRows(target, rows, normalizer) {
+  for (const row of rows || []) {
+    const normalized = normalizer(row);
+    if (normalized) {
+      target.push(normalized);
+    }
+  }
+}
+
+async function appendFetchedRows(target, fetchOptions) {
+  const rows = await fetchWithOptionalPageFilter(fetchOptions);
+  for (const row of rows) {
+    target.push(row);
+  }
+}
+
 async function fetchSearchAnalyticsRows({
   siteUrl,
   startDate,
@@ -135,7 +151,7 @@ async function fetchSearchAnalyticsRows({
     });
 
     const rows = response.data.rows || [];
-    allRows.push(...rows.map(normalizer).filter(Boolean));
+    appendNormalizedRows(allRows, rows, normalizer);
 
     if (rows.length < MAX_ROW_LIMIT) {
       break;
@@ -229,19 +245,17 @@ export async function fetchGscKeywordRows({
     if (chunks.length > 1) {
       const chunkRows = [];
       for (const chunk of chunks) {
-        chunkRows.push(
-          ...(await fetchWithOptionalPageFilter({
-            siteUrl,
-            startDate: chunk.start,
-            endDate: chunk.end,
-            searchType,
-            keyFile,
-            authClient,
-            pageContains,
-            dimensions,
-            normalizer: normalizeKeywordRow,
-          })),
-        );
+        await appendFetchedRows(chunkRows, {
+          siteUrl,
+          startDate: chunk.start,
+          endDate: chunk.end,
+          searchType,
+          keyFile,
+          authClient,
+          pageContains,
+          dimensions,
+          normalizer: normalizeKeywordRow,
+        });
       }
       return chunkRows;
     }
