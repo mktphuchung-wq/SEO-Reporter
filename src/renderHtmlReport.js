@@ -251,37 +251,37 @@ function renderUrlMovement(movement) {
   });
 }
 
-function renderGeminiInsights(geminiInsights) {
+function renderAiInsights(aiInsights) {
   return `<section>
-    <h2>Executive Summary / Gemini AI SEO Insights</h2>
-    ${geminiInsights.available ? `
+    <h2>Executive Summary / OpenRouter AI SEO Insights</h2>
+    ${aiInsights.available ? `
       <div class="two-col">
-        <div><h3>Executive Summary</h3>${aiList(geminiInsights.executiveSummary)}</div>
-        <div><h3>What Changed</h3>${rowsToTable(geminiInsights.whatChanged || [], {
+        <div><h3>Executive Summary</h3>${aiList(aiInsights.executiveSummary)}</div>
+        <div><h3>What Changed</h3>${rowsToTable(aiInsights.whatChanged || [], {
           header: "<tr><th>Finding</th><th>Evidence</th><th>Impact</th></tr>",
           row: (item) => `<tr><td>${escapeHtml(item.finding)}</td><td>${escapeHtml(item.evidence)}</td><td>${priorityBadge(item.impact)}</td></tr>`,
         })}</div>
-        <div><h3>Risks</h3>${rowsToTable(geminiInsights.risks || [], {
+        <div><h3>Risks</h3>${rowsToTable(aiInsights.risks || [], {
           header: "<tr><th>Risk</th><th>Evidence</th><th>Recommended action</th></tr>",
           row: (item) => `<tr><td>${escapeHtml(item.risk)}</td><td>${escapeHtml(item.evidence)}</td><td>${escapeHtml(item.recommendedAction)}</td></tr>`,
         })}</div>
-        <div><h3>Opportunities</h3>${rowsToTable(geminiInsights.opportunities || [], {
+        <div><h3>Opportunities</h3>${rowsToTable(aiInsights.opportunities || [], {
           header: "<tr><th>Opportunity</th><th>Evidence</th><th>Recommended action</th></tr>",
           row: (item) => `<tr><td>${escapeHtml(item.opportunity)}</td><td>${escapeHtml(item.evidence)}</td><td>${escapeHtml(item.recommendedAction)}</td></tr>`,
         })}</div>
       </div>
       <h3 style="margin-top:12px;">Recommendation Actions</h3>
-      ${rowsToTable(geminiInsights.recommendationActions || [], {
+      ${rowsToTable(aiInsights.recommendationActions || [], {
         header: "<tr><th>Priority</th><th>Action</th><th>Target URL</th><th>Target query</th><th>Why</th><th>Expected impact</th><th>Effort</th></tr>",
         row: (item) => `<tr><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.action)}</td><td class="url">${linkedUrl(item.targetUrl)}</td><td>${escapeHtml(item.targetQuery)}</td><td>${escapeHtml(item.why)}</td><td>${escapeHtml(item.expectedImpact)}</td><td>${escapeHtml(item.effort)}</td></tr>`,
       })}
       <h3 style="margin-top:12px;">Content Refresh Plan</h3>
-      ${rowsToTable(geminiInsights.contentRefreshPlan || [], {
+      ${rowsToTable(aiInsights.contentRefreshPlan || [], {
         header: "<tr><th>URL</th><th>Reason</th><th>Update suggestion</th><th>Supporting queries</th></tr>",
         row: (item) => `<tr><td class="url">${linkedUrl(item.url)}</td><td>${escapeHtml(item.reason)}</td><td>${escapeHtml(item.updateSuggestion)}</td><td>${escapeHtml((item.supportingQueries || []).join(", "))}</td></tr>`,
       })}
-      <h3 style="margin-top:12px;">Next Report Focus</h3>${aiList(geminiInsights.nextReportFocus)}
-    ` : `<p class="empty">${escapeHtml(geminiInsights.message || "AI insight unavailable.")}</p>`}
+      <h3 style="margin-top:12px;">Next Report Focus</h3>${aiList(aiInsights.nextReportFocus)}
+    ` : `<p class="empty">${escapeHtml(aiInsights.message || "AI insight unavailable.")}</p>`}
   </section>`;
 }
 
@@ -350,7 +350,7 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, k
   const snapshot = insights.contentOpportunitySnapshot;
   const movement = insights.urlMovement30Days;
   const sixMonths = insights.url6MonthInsights;
-  const geminiInsights = keywordInsights.geminiInsights || { available: false, message: "AI insight not requested." };
+  const aiInsights = keywordInsights.aiInsights || { available: false, message: "AI insight not requested." };
   const filters = sourceInfo.filters || {};
   const diagnostics = sourceInfo.diagnostics || {};
   const dataDelayNote = sourceInfo.dataDelayNote || (diagnostics.gscDataDelayDays != null && sourceInfo.range?.end ? `GSC data may be delayed; report ends at ${sourceInfo.range.end}.` : null);
@@ -378,7 +378,7 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, k
   <header><h1>SEO Insight Report</h1><div class="meta"><span>Generated: ${escapeHtml(insights.generatedAt)}</span><span>Source: ${escapeHtml(sourceInfo.label)}</span><span>Property: ${escapeHtml(sourceInfo.property)}</span><span>Date range: ${escapeHtml(rangeLabel(sourceInfo.range))}</span><span>Data span: ${escapeHtml(insights.dataSpan ? rangeLabel(insights.dataSpan) : "No data")}</span></div></header>
   <section><h2>Active Filters</h2>${dataDelayNote ? `<p class="note-box" style="margin-bottom:10px;">${escapeHtml(dataDelayNote)}</p>` : ""}<div class="kpis"><div class="kpi"><span>Property</span><strong>${escapeHtml(sourceInfo.property || "—")}</strong></div><div class="kpi"><span>Search type</span><strong>${escapeHtml(filters.searchType || "web")}</strong></div><div class="kpi"><span>Date range</span><strong>${escapeHtml(rangeLabel(sourceInfo.range))}</strong></div><div class="kpi"><span>Fetched analysis range</span><strong>${escapeHtml(rangeLabel(diagnostics.queryRange))}</strong></div><div class="kpi"><span>Report period</span><strong>${escapeHtml(filters.reportPeriodLabel || filters.reportPeriod || "custom")}</strong></div><div class="kpi"><span>Page contains filter</span><strong>${escapeHtml(filters.pageContains || "None")}</strong></div><div class="kpi"><span>Tracked keyword count</span><strong>${formatNumber(filters.trackedKeywordCount || 0)}</strong></div></div></section>
   ${renderEmptyReportSection({ sourceInfo, filters, diagnostics })}
-  ${renderGeminiInsights(geminiInsights)}
+  ${renderAiInsights(aiInsights)}
   ${renderOverview(overview)}
   ${renderPerformance3Months(perf)}
   ${renderLast30Contribution(contribution)}
@@ -386,7 +386,7 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, k
   ${renderUrlMovement(movement)}
   ${renderKeywordSections(keywordInsights, keywordCsvDownloadUrl)}
   ${render6MonthSignals(sixMonths)}
-  <section><h2>Appendix / Raw tables</h2>${insights.dataAvailabilityNotes?.length ? `<ul>${insights.dataAvailabilityNotes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : `<p class="empty">Enough fetched data is available for the core comparisons.</p>`}<div class="kpis"><div class="kpi"><span>Raw page rows</span><strong>${formatNumber(diagnostics.pageRowCount || 0)}</strong></div><div class="kpi"><span>Coalesced page rows</span><strong>${formatNumber(diagnostics.coalescedPageRowCount || 0)}</strong></div><div class="kpi"><span>Keyword rows</span><strong>${formatNumber(diagnostics.keywordRowCount || 0)}</strong></div><div class="kpi"><span>GSC delay days</span><strong>${diagnostics.gscDataDelayDays ?? "—"}</strong></div><div class="kpi"><span>Page filter applied</span><strong>${yesNo(Boolean(diagnostics.pageContainsApplied ?? filters.pageContains))}</strong></div></div><p class="muted">Report tables above are generated from compact GSC page and query summaries. Full raw GSC rows are not exposed to Gemini AI.</p></section>
+  <section><h2>Appendix / Raw tables</h2>${insights.dataAvailabilityNotes?.length ? `<ul>${insights.dataAvailabilityNotes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : `<p class="empty">Enough fetched data is available for the core comparisons.</p>`}<div class="kpis"><div class="kpi"><span>Raw page rows</span><strong>${formatNumber(diagnostics.pageRowCount || 0)}</strong></div><div class="kpi"><span>Coalesced page rows</span><strong>${formatNumber(diagnostics.coalescedPageRowCount || 0)}</strong></div><div class="kpi"><span>Keyword rows</span><strong>${formatNumber(diagnostics.keywordRowCount || 0)}</strong></div><div class="kpi"><span>GSC delay days</span><strong>${diagnostics.gscDataDelayDays ?? "—"}</strong></div><div class="kpi"><span>Page filter applied</span><strong>${yesNo(Boolean(diagnostics.pageContainsApplied ?? filters.pageContains))}</strong></div></div><p class="muted">Report tables above are generated from compact GSC page and query summaries. Full raw GSC rows are not exposed to OpenRouter AI.</p></section>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
 <script>

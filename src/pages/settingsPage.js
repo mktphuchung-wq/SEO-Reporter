@@ -13,7 +13,7 @@ export function renderSettingsPage({ authenticated = false, user = null, session
     ["GOOGLE_REDIRECT_URI", envHealth.GOOGLE_REDIRECT_URI],
     ["SESSION_SECRET", envHealth.SESSION_SECRET],
     ["DATABASE_URL", envHealth.DATABASE_URL],
-    ["GEMINI_API_KEY", envHealth.GEMINI_API_KEY],
+    ["OPENROUTER_API_KEY", envHealth.OPENROUTER_API_KEY],
   ].map(([name, configured]) => ({ name, configured }));
 
   const body = `

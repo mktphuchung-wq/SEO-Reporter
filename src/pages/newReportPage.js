@@ -113,8 +113,8 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
         <div class="checkbox-row field">
           <input id="enableAiInsights" type="checkbox" name="enableAiInsights" value="1" ${checked(defaultValues.enableAiInsights)} />
           <div>
-            <label for="enableAiInsights">Enable Gemini AI insight</label>
-            ${renderFieldHelper("Gemini insights run only when enabled and GEMINI_API_KEY is configured; no API key value is shown in the UI.")}
+            <label for="enableAiInsights">Enable OpenRouter AI insight</label>
+            ${renderFieldHelper("OpenRouter insights run only when enabled and OPENROUTER_API_KEY is configured; no API key value is shown in the UI.")}
           </div>
         </div>
 

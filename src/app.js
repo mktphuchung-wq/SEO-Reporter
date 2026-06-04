@@ -457,7 +457,7 @@ function buildEmptyDataWarning(error, fallbackInput = {}) {
 
 function redactSensitiveValue(message) {
   let safeMessage = String(message || "");
-  for (const value of [process.env.DATABASE_URL, process.env.SUPABASE_SECRET_KEY, process.env.GOOGLE_CLIENT_SECRET, process.env.GEMINI_API_KEY]) {
+  for (const value of [process.env.DATABASE_URL, process.env.SUPABASE_SECRET_KEY, process.env.GOOGLE_CLIENT_SECRET, process.env.OPENROUTER_API_KEY]) {
     if (value) {
       safeMessage = safeMessage.split(value).join("[redacted]");
     }
@@ -707,7 +707,7 @@ function buildEnvHealth() {
     GOOGLE_REDIRECT_URI: Boolean(process.env.GOOGLE_REDIRECT_URI),
     SESSION_SECRET: Boolean(process.env.SESSION_SECRET),
     DATABASE_URL: Boolean(process.env.DATABASE_URL),
-    GEMINI_API_KEY: Boolean(process.env.GEMINI_API_KEY),
+    OPENROUTER_API_KEY: Boolean(process.env.OPENROUTER_API_KEY),
   };
 }
 
