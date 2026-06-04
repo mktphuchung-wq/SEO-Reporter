@@ -849,7 +849,7 @@ function buildReportDownloadFilename(job) {
 function renderReportActionBar(job) {
   const encodedId = encodeURIComponent(job.id);
   return `<div class="saved-report-actions" role="region" aria-label="Saved report actions">
-    <strong>Saved report</strong>
+    <strong>Report saved</strong>
     <a href="/reports/${encodedId}/download">Download HTML + CSS + Script</a>
     <a href="/reports/${encodedId}/status">Status</a>
     <a href="/reports">History</a>
@@ -906,7 +906,7 @@ function renderReportStatusPage(job) {
       <p><strong>Updated:</strong> ${escapeHtml(formatJobTimestamp(updatedAt))}</p>
       ${job.status === "failed" ? `<div class="error">${escapeHtml(errorMessage || "Report generation failed.")}</div>` : ""}
       <div class="actions">
-        ${job.status === "completed" ? `<a class="btn" href="/reports/${encodeURIComponent(job.id)}/view">View completed report</a><a class="btn secondary" href="/reports/${encodeURIComponent(job.id)}/download">Download HTML + CSS + Script</a>` : ""}
+        ${job.status === "completed" ? `<a class="btn" href="/reports/${encodeURIComponent(job.id)}/view">View saved report</a><a class="btn secondary" href="/reports">Saved in report history</a><a class="btn secondary" href="/reports/${encodeURIComponent(job.id)}/download">Download HTML + CSS + Script</a>` : ""}
         ${isActive ? '<span>Refreshing every 3 seconds…</span>' : ""}
         <a class="btn secondary" href="/reports">Report history</a>
         <a class="btn secondary" href="/">Back to builder</a>
@@ -930,7 +930,7 @@ function renderReportListPage(jobs) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Reports</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#edf3ea;color:#12232e;margin:0}.shell{width:min(1100px,94vw);margin:40px auto}.card{background:#fff;border:1px solid #d7dfdc;border-radius:14px;padding:22px;overflow:auto}.btn{display:inline-block;padding:10px 14px;border-radius:8px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:700}table{border-collapse:collapse;width:100%;margin-top:16px}th,td{border-bottom:1px solid #d7dfdc;padding:10px;text-align:left}th{font-size:.85rem;text-transform:uppercase;color:#53615c}</style></head>
-<body><main class="shell"><section class="card"><h1>Saved reports</h1><p>Completed reports are stored in history and can be downloaded as a single HTML file that includes report CSS and JavaScript.</p><p><a class="btn" href="/reports/new">Create Report Job</a></p>${jobs.length ? `<table><thead><tr><th>Created</th><th>Property</th><th>Type</th><th>Date range</th><th>Status</th><th>Progress</th><th>Link</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No report jobs found for this signed-in user yet.</p>"}</section></main></body></html>`;
+<body><main class="shell"><section class="card"><h1>Saved reports</h1><p>Completed reports are stored in history and can be downloaded as a single HTML file that includes report CSS and JavaScript.</p><p><a class="btn" href="/reports/new">Create Report</a></p>${jobs.length ? `<table><thead><tr><th>Created</th><th>Property</th><th>Type</th><th>Date range</th><th>Status</th><th>Progress</th><th>Link</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No report jobs found for this signed-in user yet.</p>"}</section></main></body></html>`;
 }
 
 function safeReportJobError(error, body) {
