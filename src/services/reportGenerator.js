@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { buildSeoInsights } from "../analytics.js";
-import { generateGeminiSeoInsights } from "../ai/geminiInsights.js";
+import { generateOpenRouterSeoInsights } from "../ai/openRouterInsights.js";
 import { loadReportData } from "../dataLoader.js";
 import { buildKeywordInsightsCsv } from "../exporters/csvExport.js";
 import {
@@ -156,7 +156,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
   };
 
   const aiInsights = enableAiInsights
-    ? await generateGeminiSeoInsights({
+    ? await generateOpenRouterSeoInsights({
         sourceInfo,
         selectedPeriodOverview: insights.selectedPeriodOverview,
         performance3MonthComparison: insights.performance3MonthComparison,
@@ -202,7 +202,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
     ctrOpportunities,
     currentRange,
     previousRange,
-    geminiInsights: aiInsights,
+    aiInsights,
   };
 
   const keywordCsv = buildKeywordInsightsCsv(keywordInsights);

@@ -1,35 +1,24 @@
-const GEMINI_ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_GEMINI_TIMEOUT_MS = 60000;
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-const DEFAULT_GEMINI_THINKING_BUDGET = 0;
-const DEFAULT_GEMINI_MAX_OUTPUT_TOKENS = 2048;
-const MAX_TABLE_ROWS_FOR_GEMINI = 10;
+const OPENROUTER_CHAT_COMPLETIONS_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
+const DEFAULT_OPENROUTER_TIMEOUT_MS = 60000;
+const DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
+const DEFAULT_OPENROUTER_MAX_OUTPUT_TOKENS = 2048;
+const MAX_TABLE_ROWS_FOR_AI = 10;
 
 function getPositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function getGeminiTimeoutMs() {
-  return getPositiveInteger(process.env.GEMINI_TIMEOUT_MS, DEFAULT_GEMINI_TIMEOUT_MS);
+function getOpenRouterTimeoutMs() {
+  return getPositiveInteger(process.env.OPENROUTER_TIMEOUT_MS, DEFAULT_OPENROUTER_TIMEOUT_MS);
 }
 
-function getInteger(value, fallback) {
-  if (value === undefined || value === null || value === "") return fallback;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
+function getOpenRouterMaxOutputTokens() {
+  return getPositiveInteger(process.env.OPENROUTER_MAX_OUTPUT_TOKENS, DEFAULT_OPENROUTER_MAX_OUTPUT_TOKENS);
 }
 
-function getGeminiThinkingBudget() {
-  return getInteger(process.env.GEMINI_THINKING_BUDGET, DEFAULT_GEMINI_THINKING_BUDGET);
-}
-
-function getGeminiMaxOutputTokens() {
-  return getPositiveInteger(process.env.GEMINI_MAX_OUTPUT_TOKENS, DEFAULT_GEMINI_MAX_OUTPUT_TOKENS);
-}
-
-function limitRows(rows, limit = MAX_TABLE_ROWS_FOR_GEMINI) {
-  return (rows || []).slice(0, Math.min(limit, MAX_TABLE_ROWS_FOR_GEMINI)).map((row) => ({ ...row }));
+function limitRows(rows, limit = MAX_TABLE_ROWS_FOR_AI) {
+  return (rows || []).slice(0, Math.min(limit, MAX_TABLE_ROWS_FOR_AI)).map((row) => ({ ...row }));
 }
 
 function compactUrlTable(table) {
@@ -69,35 +58,16 @@ function fallbackUnavailable(message, diagnostics = {}) {
   return { available: false, message, diagnostics };
 }
 
-function normalizeGeminiModelName(model) {
-  const normalized = String(model || DEFAULT_GEMINI_MODEL).trim() || DEFAULT_GEMINI_MODEL;
-  return normalized.replace(/^models\//, "");
+function normalizeOpenRouterModelName(model) {
+  return String(model || DEFAULT_OPENROUTER_MODEL).trim() || DEFAULT_OPENROUTER_MODEL;
 }
 
-function supportsThinkingBudget(model) {
-  return /^gemini-2\.5-/i.test(String(model || ""));
-}
-
-function buildGeminiGenerationConfig(model) {
-  const generationConfig = {
-    temperature: 0.2,
-    responseMimeType: "application/json",
-    maxOutputTokens: getGeminiMaxOutputTokens(),
-  };
-
-  if (supportsThinkingBudget(model)) {
-    generationConfig.thinkingConfig = { thinkingBudget: getGeminiThinkingBudget() };
-  }
-
-  return generationConfig;
-}
-
-function buildGeminiErrorMessage(error, fallback) {
+function buildOpenRouterErrorMessage(error, fallback) {
   const details = String(error?.message || "").trim();
   return details ? `${fallback} (${details})` : fallback;
 }
 
-async function readGeminiError(response) {
+async function readOpenRouterError(response) {
   const contentType = response.headers?.get?.("content-type") || "";
   try {
     if (contentType.includes("application/json")) {
@@ -106,7 +76,7 @@ async function readGeminiError(response) {
     }
     return (await response.text()).slice(0, 500);
   } catch (_error) {
-    return "Unable to read Gemini API error response.";
+    return "Unable to read OpenRouter API error response.";
   }
 }
 
@@ -181,7 +151,7 @@ function normalizeRefreshPlan(value) {
   })).filter((item) => item.url || item.reason || item.updateSuggestion);
 }
 
-export async function generateGeminiSeoInsights({
+export async function generateOpenRouterSeoInsights({
   sourceInfo,
   selectedPeriodOverview,
   performance3MonthComparison,
@@ -192,16 +162,16 @@ export async function generateGeminiSeoInsights({
   nearPageOneKeywords,
   reportTablesForAI,
 }) {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    return fallbackUnavailable("AI insight unavailable: GEMINI_API_KEY is not configured.");
+    return fallbackUnavailable("AI insight unavailable: OPENROUTER_API_KEY is not configured.");
   }
 
   if (typeof fetch !== "function") {
-    return fallbackUnavailable("Gemini AI insight failed, but the SEO report was generated.");
+    return fallbackUnavailable("OpenRouter AI insight failed, but the SEO report was generated.");
   }
 
-  const model = normalizeGeminiModelName(process.env.GEMINI_MODEL);
+  const model = normalizeOpenRouterModelName(process.env.OPENROUTER_MODEL);
   const payload = {
     sourceInfo: {
       label: sourceInfo?.label,
@@ -289,29 +259,35 @@ Compact report summary (not raw rows):
 ${JSON.stringify(payload)}`;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), getGeminiTimeoutMs());
+  const timeout = setTimeout(() => controller.abort(), getOpenRouterTimeoutMs());
 
   try {
-    const response = await fetch(`${GEMINI_ENDPOINT_BASE}/${encodeURIComponent(model)}:generateContent`, {
+    const response = await fetch(OPENROUTER_CHAT_COMPLETIONS_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
       signal: controller.signal,
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: buildGeminiGenerationConfig(model),
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2,
+        max_tokens: getOpenRouterMaxOutputTokens(),
+        response_format: { type: "json_object" },
       }),
     });
     clearTimeout(timeout);
 
     if (!response.ok) {
-      const detail = await readGeminiError(response);
-      throw new Error(`Gemini API HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
+      const detail = await readOpenRouterError(response);
+      throw new Error(`OpenRouter API HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
     }
 
     const data = await response.json();
-    const text = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") || "";
+    const text = data?.choices?.[0]?.message?.content || "";
     const parsed = extractJson(text);
-    if (!parsed) throw new Error("Gemini response did not contain JSON.");
+    if (!parsed) throw new Error("OpenRouter response did not contain JSON.");
 
     return {
       available: true,
@@ -326,8 +302,8 @@ ${JSON.stringify(payload)}`;
   } catch (error) {
     clearTimeout(timeout);
     if (error?.name === "AbortError") {
-      return fallbackUnavailable("Gemini AI insight timed out, but the SEO report was generated. The request used compact data, disabled Gemini 2.5 thinking, and can be given more time with GEMINI_TIMEOUT_MS.", { model, reason: "timeout", timeoutMs: getGeminiTimeoutMs() });
+      return fallbackUnavailable("OpenRouter AI insight timed out, but the SEO report was generated. The request used compact data and can be given more time with OPENROUTER_TIMEOUT_MS.", { model, reason: "timeout", timeoutMs: getOpenRouterTimeoutMs() });
     }
-    return fallbackUnavailable(buildGeminiErrorMessage(error, "Gemini AI insight failed, but the SEO report was generated."), { model, reason: "api_error", timeoutMs: getGeminiTimeoutMs() });
+    return fallbackUnavailable(buildOpenRouterErrorMessage(error, "OpenRouter AI insight failed, but the SEO report was generated."), { model, reason: "api_error", timeoutMs: getOpenRouterTimeoutMs() });
   }
 }

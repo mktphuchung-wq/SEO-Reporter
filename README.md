@@ -27,7 +27,7 @@ SEO Reporter is an Express-based reporting app that can generate HTML SEO report
   - CTR opportunities
   - keyword winners
 - Existing URL trend, publishing, and 6-month movement sections.
-- Optional Gemini AI SEO insights in Vietnamese when `GEMINI_API_KEY` is configured.
+- Optional OpenRouter AI SEO insights in Vietnamese when `OPENROUTER_API_KEY` is configured.
 - Optional SEO alert generation with severity labels and Slack/email notifications for high-severity issues only.
 
 ## Environment Variables
@@ -52,9 +52,8 @@ Internal access and production controls:
 ALLOWED_EMAILS=you@example.com,teammate@example.com
 ALLOWED_DOMAINS=example.com
 ENABLE_DEBUG_ROUTES=false
-GEMINI_TIMEOUT_MS=60000
-GEMINI_THINKING_BUDGET=0
-GEMINI_MAX_OUTPUT_TOKENS=2048
+OPENROUTER_TIMEOUT_MS=60000
+OPENROUTER_MAX_OUTPUT_TOKENS=2048
 MAX_AI_ROWS=100
 MAX_TRACKED_KEYWORDS=100
 GSC_CACHE_TTL_SECONDS=300
@@ -66,8 +65,8 @@ Optional integrations:
 
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-GEMINI_API_KEY=your-gemini-api-key
-GEMINI_MODEL=gemini-2.5-flash
+OPENROUTER_API_KEY=your-openrouter-api-key
+OPENROUTER_MODEL=nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
 SEO_ALERTS_ENABLED=false
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/example/example/example
 ALERT_EMAIL_PROVIDER_URL=https://email-provider.example/send
@@ -81,7 +80,7 @@ SEO_ALERT_TRACKED_CLICK_LOSS_PERCENT=30
 SEO_ALERT_CTR_HIGH_IMPRESSIONS=1000
 ```
 
-`GEMINI_API_KEY` is optional. If it is not configured, times out, or fails, the report still renders and shows an AI-unavailable note with the Gemini model and API error context needed for troubleshooting. Gemini 2.5 requests default to `GEMINI_THINKING_BUDGET=0` so quick report insights do not spend time on dynamic thinking; raise `GEMINI_TIMEOUT_MS` only if your deployment can wait longer. SEO alerts can be enabled from the report form or globally with `SEO_ALERTS_ENABLED=true`; notification delivery requires either `SLACK_WEBHOOK_URL` or `ALERT_EMAIL_PROVIDER_URL` plus `ALERT_EMAIL_TO`. The `/reports` async flow and legacy `/generate` fallback send a summary only when at least one high-severity alert exists, such as a position loss of at least 3 with at least 500 impressions or a tracked keyword with a large click loss.
+`OPENROUTER_API_KEY` is optional. If it is not configured, times out, or fails, the report still renders and shows an AI-unavailable note with the OpenRouter model and API error context needed for troubleshooting. Raise `OPENROUTER_TIMEOUT_MS` only if your deployment can wait longer. SEO alerts can be enabled from the report form or globally with `SEO_ALERTS_ENABLED=true`; notification delivery requires either `SLACK_WEBHOOK_URL` or `ALERT_EMAIL_PROVIDER_URL` plus `ALERT_EMAIL_TO`. The `/reports` async flow and legacy `/generate` fallback send a summary only when at least one high-severity alert exists, such as a position loss of at least 3 with at least 500 impressions or a tracked keyword with a large click loss.
 
 
 ## Supabase Database Setup
@@ -133,7 +132,7 @@ To test the GSC reporting flow locally after OAuth environment variables are pre
 6. Choose a report period or custom dates.
 7. Optionally enter a page URL filter such as `/ten-su-kien/`.
 8. Optionally enter tracked keywords, one per line or separated by commas.
-9. Optionally enable Gemini AI insights if `GEMINI_API_KEY` is configured.
+9. Optionally enable OpenRouter AI insights if `OPENROUTER_API_KEY` is configured.
 10. Optionally enable SEO alerts after configuring Slack or email alert environment variables.
 11. Submit **Create Report Job**. The form posts to `POST /reports`, creates a durable Supabase Postgres job, and redirects immediately to `/reports/:id/status`.
 12. Wait for the auto-refreshing status page to show `completed`, then open `/reports/:id/view`.
@@ -148,7 +147,7 @@ The generated HTML report includes the existing SEO sections plus new GSC keywor
 - High Impression Keywords Near Page 1.
 - CTR Opportunity Keywords.
 - Keyword Winners.
-- Gemini AI SEO Insights when enabled and configured.
+- OpenRouter AI SEO Insights when enabled and configured.
 - SEO Alerts with severity labels, generated from high-impression ranking drops, tracked keyword movement, and CTR opportunities.
 
 Average position uses Google Search Console semantics: lower is better.
