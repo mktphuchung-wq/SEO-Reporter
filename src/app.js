@@ -794,6 +794,7 @@ function rememberReportRequestInSession(sessionObject, body, { reportPeriod, pag
   sessionObject.pageContains = pageContains;
   sessionObject.trackedKeywords = trackedKeywordsInput;
   sessionObject.searchType = body.searchType || "web";
+  sessionObject.enableAiInsights = body.enableAiInsights === true || body.enableAiInsights === "1" || body.enableAiInsights === "on";
 }
 
 async function generateReportFromBody({ body, authClient, sessionObject, onProgress = () => {} }) {
