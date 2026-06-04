@@ -1,7 +1,9 @@
 const GEMINI_ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_GEMINI_TIMEOUT_MS = 30000;
+const DEFAULT_GEMINI_TIMEOUT_MS = 60000;
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-const MAX_TABLE_ROWS_FOR_GEMINI = 15;
+const DEFAULT_GEMINI_THINKING_BUDGET = 0;
+const DEFAULT_GEMINI_MAX_OUTPUT_TOKENS = 2048;
+const MAX_TABLE_ROWS_FOR_GEMINI = 10;
 
 function getPositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -10,6 +12,20 @@ function getPositiveInteger(value, fallback) {
 
 function getGeminiTimeoutMs() {
   return getPositiveInteger(process.env.GEMINI_TIMEOUT_MS, DEFAULT_GEMINI_TIMEOUT_MS);
+}
+
+function getInteger(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getGeminiThinkingBudget() {
+  return getInteger(process.env.GEMINI_THINKING_BUDGET, DEFAULT_GEMINI_THINKING_BUDGET);
+}
+
+function getGeminiMaxOutputTokens() {
+  return getPositiveInteger(process.env.GEMINI_MAX_OUTPUT_TOKENS, DEFAULT_GEMINI_MAX_OUTPUT_TOKENS);
 }
 
 function limitRows(rows, limit = MAX_TABLE_ROWS_FOR_GEMINI) {
@@ -56,6 +72,24 @@ function fallbackUnavailable(message, diagnostics = {}) {
 function normalizeGeminiModelName(model) {
   const normalized = String(model || DEFAULT_GEMINI_MODEL).trim() || DEFAULT_GEMINI_MODEL;
   return normalized.replace(/^models\//, "");
+}
+
+function supportsThinkingBudget(model) {
+  return /^gemini-2\.5-/i.test(String(model || ""));
+}
+
+function buildGeminiGenerationConfig(model) {
+  const generationConfig = {
+    temperature: 0.2,
+    responseMimeType: "application/json",
+    maxOutputTokens: getGeminiMaxOutputTokens(),
+  };
+
+  if (supportsThinkingBudget(model)) {
+    generationConfig.thinkingConfig = { thinkingBudget: getGeminiThinkingBudget() };
+  }
+
+  return generationConfig;
 }
 
 function buildGeminiErrorMessage(error, fallback) {
@@ -264,10 +298,7 @@ ${JSON.stringify(payload)}`;
       signal: controller.signal,
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.25,
-          responseMimeType: "application/json",
-        },
+        generationConfig: buildGeminiGenerationConfig(model),
       }),
     });
     clearTimeout(timeout);
@@ -295,8 +326,8 @@ ${JSON.stringify(payload)}`;
   } catch (error) {
     clearTimeout(timeout);
     if (error?.name === "AbortError") {
-      return fallbackUnavailable("Gemini AI insight timed out, but the SEO report was generated. Try increasing GEMINI_TIMEOUT_MS.", { model, reason: "timeout" });
+      return fallbackUnavailable("Gemini AI insight timed out, but the SEO report was generated. The request used compact data, disabled Gemini 2.5 thinking, and can be given more time with GEMINI_TIMEOUT_MS.", { model, reason: "timeout", timeoutMs: getGeminiTimeoutMs() });
     }
-    return fallbackUnavailable(buildGeminiErrorMessage(error, "Gemini AI insight failed, but the SEO report was generated."), { model, reason: "api_error" });
+    return fallbackUnavailable(buildGeminiErrorMessage(error, "Gemini AI insight failed, but the SEO report was generated."), { model, reason: "api_error", timeoutMs: getGeminiTimeoutMs() });
   }
 }
