@@ -58,9 +58,9 @@ export function renderHomePage({ sites = [], authenticated = false, user = null,
         <div class="split">
           <div>
             <h2>Recent report jobs</h2>
-            <p class="muted">A permanent report history will appear when database-backed job storage is connected.</p>
+            <p class="muted">Saved report history is available after each generated job completes, including downloads for the full HTML file with embedded CSS and script.</p>
           </div>
-          ${renderStatusBadge("neutral")}
+          <a class="btn btn-secondary" href="/reports">Open report history</a>
         </div>
         ${renderTable({
           columns: [

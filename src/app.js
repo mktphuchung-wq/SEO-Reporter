@@ -797,7 +797,7 @@ function rememberReportRequestInSession(sessionObject, body, { reportPeriod, pag
   sessionObject.enableAiInsights = body.enableAiInsights === true || body.enableAiInsights === "1" || body.enableAiInsights === "on";
 }
 
-async function generateReportFromBody({ body, authClient, sessionObject, onProgress = () => {} }) {
+async function generateReportFromBody({ body, authClient, sessionObject, onProgress = () => {}, reportDownloadUrl = "" }) {
   const sourceType = validateReportRequest(body, authClient);
   const reportPeriod = body.reportPeriod || "30d";
   const pageContains = String(body.pageContains || "").trim();
@@ -808,6 +808,7 @@ async function generateReportFromBody({ body, authClient, sessionObject, onProgr
     input: { ...body, sourceType, reportPeriod, pageContains },
     authClient,
     onProgress,
+    reportDownloadUrl,
   });
 
   if (sessionObject && result.keywordCsv) {
@@ -825,6 +826,48 @@ function formatJobTimestamp(value) {
     return "—";
   }
   return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function slugifyFilenamePart(value, fallback = "report") {
+  const slug = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return slug || fallback;
+}
+
+function buildReportDownloadFilename(job) {
+  const property = slugifyFilenamePart(job.property_url, "seo-report");
+  const searchType = slugifyFilenamePart(job.search_type || "web", "web");
+  const range = job.start_date || job.end_date ? `${job.start_date || "start"}-to-${job.end_date || "end"}` : job.report_period || "report";
+  return `${property}-${searchType}-${slugifyFilenamePart(range, "report")}.html`;
+}
+
+function renderReportActionBar(job) {
+  const encodedId = encodeURIComponent(job.id);
+  return `<div class="saved-report-actions" role="region" aria-label="Saved report actions">
+    <strong>Saved report</strong>
+    <a href="/reports/${encodedId}/download">Download HTML + CSS + Script</a>
+    <a href="/reports/${encodedId}/status">Status</a>
+    <a href="/reports">History</a>
+  </div>
+  <style>
+    .saved-report-actions{position:sticky;top:0;z-index:9999;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:rgba(16,32,39,.96);color:#fff;padding:10px 16px;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+    .saved-report-actions a{display:inline-flex;align-items:center;border:1px solid rgba(255,255,255,.45);border-radius:999px;padding:7px 11px;color:#fff;text-decoration:none;font-weight:800;background:rgba(255,255,255,.08)}
+    .saved-report-actions a:hover{background:rgba(255,255,255,.18)}
+    @media print{.saved-report-actions{display:none}}
+  </style>`;
+}
+
+function injectReportActionBar(reportHtml, job) {
+  const actionBar = renderReportActionBar(job);
+  if (String(reportHtml || "").includes("</body>")) {
+    return String(reportHtml).replace("</body>", `${actionBar}</body>`);
+  }
+  return `${actionBar}${reportHtml || ""}`;
 }
 
 function getReportStatusTone(status) {
@@ -863,7 +906,7 @@ function renderReportStatusPage(job) {
       <p><strong>Updated:</strong> ${escapeHtml(formatJobTimestamp(updatedAt))}</p>
       ${job.status === "failed" ? `<div class="error">${escapeHtml(errorMessage || "Report generation failed.")}</div>` : ""}
       <div class="actions">
-        ${job.status === "completed" ? `<a class="btn" href="/reports/${encodeURIComponent(job.id)}/view">View completed report</a>` : ""}
+        ${job.status === "completed" ? `<a class="btn" href="/reports/${encodeURIComponent(job.id)}/view">View completed report</a><a class="btn secondary" href="/reports/${encodeURIComponent(job.id)}/download">Download HTML + CSS + Script</a>` : ""}
         ${isActive ? '<span>Refreshing every 3 seconds…</span>' : ""}
         <a class="btn secondary" href="/reports">Report history</a>
         <a class="btn secondary" href="/">Back to builder</a>
@@ -877,15 +920,17 @@ function renderReportStatusPage(job) {
 function renderReportListPage(jobs) {
   const rows = jobs
     .map((job) => {
-      const href = job.status === "completed" ? `/reports/${encodeURIComponent(job.id)}/view` : `/reports/${encodeURIComponent(job.id)}/status`;
-      return `<tr><td>${escapeHtml(formatJobTimestamp(job.created_at))}</td><td>${escapeHtml(job.property_url || "—")}</td><td>${escapeHtml(job.search_type || "web")}</td><td>${escapeHtml(job.start_date || "—")} → ${escapeHtml(job.end_date || "—")}</td><td>${escapeHtml(job.status)}</td><td>${escapeHtml(job.progress)}%</td><td><a href="${href}">${job.status === "completed" ? "View" : "Status"}</a></td></tr>`;
+      const encodedId = encodeURIComponent(job.id);
+      const href = job.status === "completed" ? `/reports/${encodedId}/view` : `/reports/${encodedId}/status`;
+      const downloadLink = job.status === "completed" ? ` · <a href="/reports/${encodedId}/download">Download HTML</a>` : "";
+      return `<tr><td>${escapeHtml(formatJobTimestamp(job.created_at))}</td><td>${escapeHtml(job.property_url || "—")}</td><td>${escapeHtml(job.search_type || "web")}</td><td>${escapeHtml(job.start_date || "—")} → ${escapeHtml(job.end_date || "—")}</td><td>${escapeHtml(job.status)}</td><td>${escapeHtml(job.progress)}%</td><td><a href="${href}">${job.status === "completed" ? "View" : "Status"}</a>${downloadLink}</td></tr>`;
     })
     .join("");
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Reports</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#edf3ea;color:#12232e;margin:0}.shell{width:min(1100px,94vw);margin:40px auto}.card{background:#fff;border:1px solid #d7dfdc;border-radius:14px;padding:22px;overflow:auto}.btn{display:inline-block;padding:10px 14px;border-radius:8px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:700}table{border-collapse:collapse;width:100%;margin-top:16px}th,td{border-bottom:1px solid #d7dfdc;padding:10px;text-align:left}th{font-size:.85rem;text-transform:uppercase;color:#53615c}</style></head>
-<body><main class="shell"><section class="card"><h1>Recent report jobs</h1><p><a class="btn" href="/">Create Report Job</a></p>${jobs.length ? `<table><thead><tr><th>Created</th><th>Property</th><th>Type</th><th>Date range</th><th>Status</th><th>Progress</th><th>Link</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No report jobs found for this signed-in user yet.</p>"}</section></main></body></html>`;
+<body><main class="shell"><section class="card"><h1>Saved reports</h1><p>Completed reports are stored in history and can be downloaded as a single HTML file that includes report CSS and JavaScript.</p><p><a class="btn" href="/reports/new">Create Report Job</a></p>${jobs.length ? `<table><thead><tr><th>Created</th><th>Property</th><th>Type</th><th>Date range</th><th>Status</th><th>Progress</th><th>Link</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No report jobs found for this signed-in user yet.</p>"}</section></main></body></html>`;
 }
 
 function safeReportJobError(error, body) {
@@ -903,6 +948,7 @@ function startReportJob(job, { body, authClient, sessionObject }) {
         body,
         authClient,
         sessionObject,
+        reportDownloadUrl: `/reports/${encodeURIComponent(job.id)}/download`,
         onProgress: (progress) => updateReportJobProgress(job.id, progress).catch((error) => console.warn("Failed to update report progress.", error instanceof Error ? error.message : error)),
       });
       await completeReportJob(job.id, result);
@@ -991,9 +1037,34 @@ app.get("/reports/:id/view", async (req, res) => {
       res.redirect(`/reports/${encodeURIComponent(job.id)}/status`);
       return;
     }
-    res.type("html").send(job.report_html);
+    res.type("html").send(injectReportActionBar(job.report_html, job));
   } catch (error) {
     res.status(500).type("text").send(safeErrorMessage(error, "Unable to load report job."));
+  }
+});
+
+app.get("/reports/:id/download", async (req, res) => {
+  try {
+    const job = await getReportJob(req.params.id);
+    if (!job) {
+      res.status(404).type("text").send("Report job not found.");
+      return;
+    }
+    if (job.status !== "completed" || !job.report_html) {
+      res.status(409).type("text").send("Report is not ready for download yet.");
+      return;
+    }
+
+    res
+      .status(200)
+      .set({
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${buildReportDownloadFilename(job)}"`,
+        "Cache-Control": "private, max-age=0, must-revalidate",
+      })
+      .send(job.report_html);
+  } catch (error) {
+    res.status(500).type("text").send(safeErrorMessage(error, "Unable to download report job."));
   }
 });
 

@@ -100,7 +100,7 @@ export function validateReportInput(input = {}, authClient = null) {
   return sourceType;
 }
 
-export async function generateReportFromInput({ input: rawInput = {}, authClient, onProgress = () => {} }) {
+export async function generateReportFromInput({ input: rawInput = {}, authClient, onProgress = () => {}, reportDownloadUrl = "" }) {
   const sourceType = validateReportInput(rawInput, authClient);
   onProgress(10);
 
@@ -210,6 +210,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
     insights,
     sourceInfo: enrichedSourceInfo,
     keywordInsights,
+    reportDownloadUrl,
   });
   onProgress(80);
 
