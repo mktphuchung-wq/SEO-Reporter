@@ -189,8 +189,19 @@ function pctFromDelta(delta, base) {
   return (delta / base) * 100;
 }
 
+function collectUrlKeys(currentMap, previousMap) {
+  const urls = new Set();
+  for (const url of currentMap.keys()) {
+    urls.add(url);
+  }
+  for (const url of previousMap.keys()) {
+    urls.add(url);
+  }
+  return urls;
+}
+
 function compareUrlMaps(currentMap, previousMap) {
-  const urls = new Set([...currentMap.keys(), ...previousMap.keys()]);
+  const urls = collectUrlKeys(currentMap, previousMap);
   const rows = [];
 
   for (const url of urls) {
