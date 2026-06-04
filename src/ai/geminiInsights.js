@@ -1,6 +1,9 @@
 const GEMINI_ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_GEMINI_TIMEOUT_MS = 12000;
-const MAX_TABLE_ROWS_FOR_GEMINI = 15;
+const DEFAULT_GEMINI_TIMEOUT_MS = 60000;
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+const DEFAULT_GEMINI_THINKING_BUDGET = 0;
+const DEFAULT_GEMINI_MAX_OUTPUT_TOKENS = 2048;
+const MAX_TABLE_ROWS_FOR_GEMINI = 10;
 
 function getPositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -9,6 +12,20 @@ function getPositiveInteger(value, fallback) {
 
 function getGeminiTimeoutMs() {
   return getPositiveInteger(process.env.GEMINI_TIMEOUT_MS, DEFAULT_GEMINI_TIMEOUT_MS);
+}
+
+function getInteger(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getGeminiThinkingBudget() {
+  return getInteger(process.env.GEMINI_THINKING_BUDGET, DEFAULT_GEMINI_THINKING_BUDGET);
+}
+
+function getGeminiMaxOutputTokens() {
+  return getPositiveInteger(process.env.GEMINI_MAX_OUTPUT_TOKENS, DEFAULT_GEMINI_MAX_OUTPUT_TOKENS);
 }
 
 function limitRows(rows, limit = MAX_TABLE_ROWS_FOR_GEMINI) {
@@ -48,8 +65,49 @@ function compactKeywordRows(rows) {
   }));
 }
 
-function fallbackUnavailable(message) {
-  return { available: false, message };
+function fallbackUnavailable(message, diagnostics = {}) {
+  return { available: false, message, diagnostics };
+}
+
+function normalizeGeminiModelName(model) {
+  const normalized = String(model || DEFAULT_GEMINI_MODEL).trim() || DEFAULT_GEMINI_MODEL;
+  return normalized.replace(/^models\//, "");
+}
+
+function supportsThinkingBudget(model) {
+  return /^gemini-2\.5-/i.test(String(model || ""));
+}
+
+function buildGeminiGenerationConfig(model) {
+  const generationConfig = {
+    temperature: 0.2,
+    responseMimeType: "application/json",
+    maxOutputTokens: getGeminiMaxOutputTokens(),
+  };
+
+  if (supportsThinkingBudget(model)) {
+    generationConfig.thinkingConfig = { thinkingBudget: getGeminiThinkingBudget() };
+  }
+
+  return generationConfig;
+}
+
+function buildGeminiErrorMessage(error, fallback) {
+  const details = String(error?.message || "").trim();
+  return details ? `${fallback} (${details})` : fallback;
+}
+
+async function readGeminiError(response) {
+  const contentType = response.headers?.get?.("content-type") || "";
+  try {
+    if (contentType.includes("application/json")) {
+      const data = await response.json();
+      return data?.error?.message || JSON.stringify(data?.error || data);
+    }
+    return (await response.text()).slice(0, 500);
+  } catch (_error) {
+    return "Unable to read Gemini API error response.";
+  }
 }
 
 function extractJson(text) {
@@ -143,7 +201,7 @@ export async function generateGeminiSeoInsights({
     return fallbackUnavailable("Gemini AI insight failed, but the SEO report was generated.");
   }
 
-  const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  const model = normalizeGeminiModelName(process.env.GEMINI_MODEL);
   const payload = {
     sourceInfo: {
       label: sourceInfo?.label,
@@ -234,18 +292,21 @@ ${JSON.stringify(payload)}`;
   const timeout = setTimeout(() => controller.abort(), getGeminiTimeoutMs());
 
   try {
-    const response = await fetch(`${GEMINI_ENDPOINT_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+    const response = await fetch(`${GEMINI_ENDPOINT_BASE}/${encodeURIComponent(model)}:generateContent`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       signal: controller.signal,
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.25, responseMimeType: "application/json" },
+        generationConfig: buildGeminiGenerationConfig(model),
       }),
     });
     clearTimeout(timeout);
 
-    if (!response.ok) throw new Error(`Gemini API HTTP ${response.status}`);
+    if (!response.ok) {
+      const detail = await readGeminiError(response);
+      throw new Error(`Gemini API HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
+    }
 
     const data = await response.json();
     const text = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") || "";
@@ -265,8 +326,8 @@ ${JSON.stringify(payload)}`;
   } catch (error) {
     clearTimeout(timeout);
     if (error?.name === "AbortError") {
-      return fallbackUnavailable("Gemini AI insight timed out, but the SEO report was generated.");
+      return fallbackUnavailable("Gemini AI insight timed out, but the SEO report was generated. The request used compact data, disabled Gemini 2.5 thinking, and can be given more time with GEMINI_TIMEOUT_MS.", { model, reason: "timeout", timeoutMs: getGeminiTimeoutMs() });
     }
-    return fallbackUnavailable("Gemini AI insight failed, but the SEO report was generated.");
+    return fallbackUnavailable(buildGeminiErrorMessage(error, "Gemini AI insight failed, but the SEO report was generated."), { model, reason: "api_error", timeoutMs: getGeminiTimeoutMs() });
   }
 }

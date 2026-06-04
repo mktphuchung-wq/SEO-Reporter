@@ -52,7 +52,9 @@ Internal access and production controls:
 ALLOWED_EMAILS=you@example.com,teammate@example.com
 ALLOWED_DOMAINS=example.com
 ENABLE_DEBUG_ROUTES=false
-GEMINI_TIMEOUT_MS=12000
+GEMINI_TIMEOUT_MS=60000
+GEMINI_THINKING_BUDGET=0
+GEMINI_MAX_OUTPUT_TOKENS=2048
 MAX_AI_ROWS=100
 MAX_TRACKED_KEYWORDS=100
 GSC_CACHE_TTL_SECONDS=300
@@ -65,7 +67,7 @@ Optional integrations:
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 GEMINI_API_KEY=your-gemini-api-key
-GEMINI_MODEL=gemini-1.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 SEO_ALERTS_ENABLED=false
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/example/example/example
 ALERT_EMAIL_PROVIDER_URL=https://email-provider.example/send
@@ -79,7 +81,7 @@ SEO_ALERT_TRACKED_CLICK_LOSS_PERCENT=30
 SEO_ALERT_CTR_HIGH_IMPRESSIONS=1000
 ```
 
-`GEMINI_API_KEY` is optional. If it is not configured, times out, or fails, the report still renders and shows an AI-unavailable note. SEO alerts can be enabled from the report form or globally with `SEO_ALERTS_ENABLED=true`; notification delivery requires either `SLACK_WEBHOOK_URL` or `ALERT_EMAIL_PROVIDER_URL` plus `ALERT_EMAIL_TO`. The `/reports` async flow and legacy `/generate` fallback send a summary only when at least one high-severity alert exists, such as a position loss of at least 3 with at least 500 impressions or a tracked keyword with a large click loss.
+`GEMINI_API_KEY` is optional. If it is not configured, times out, or fails, the report still renders and shows an AI-unavailable note with the Gemini model and API error context needed for troubleshooting. Gemini 2.5 requests default to `GEMINI_THINKING_BUDGET=0` so quick report insights do not spend time on dynamic thinking; raise `GEMINI_TIMEOUT_MS` only if your deployment can wait longer. SEO alerts can be enabled from the report form or globally with `SEO_ALERTS_ENABLED=true`; notification delivery requires either `SLACK_WEBHOOK_URL` or `ALERT_EMAIL_PROVIDER_URL` plus `ALERT_EMAIL_TO`. The `/reports` async flow and legacy `/generate` fallback send a summary only when at least one high-severity alert exists, such as a position loss of at least 3 with at least 500 impressions or a tracked keyword with a large click loss.
 
 
 ## Supabase Database Setup
