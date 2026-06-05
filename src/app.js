@@ -474,6 +474,7 @@ function normalizePresetInput(input = {}) {
   return {
     siteUrl: String(input.siteUrl || "").trim(),
     searchType: ["web", "image", "video", "news"].includes(input.searchType) ? input.searchType : "web",
+    reportType: ["monthly", "quarterly", "custom"].includes(input.reportType) ? input.reportType : "custom",
     reportPeriod: Object.prototype.hasOwnProperty.call(REPORT_PERIOD_LABELS, input.reportPeriod) ? input.reportPeriod : "30d",
     startDate: String(input.startDate || "").trim(),
     endDate: String(input.endDate || "").trim(),
@@ -562,6 +563,7 @@ function findLatestPresetForSite(presets, siteUrl) {
 
 function rememberPresetInSession(req, preset) {
   req.session.selectedSiteUrl = preset.siteUrl;
+  req.session.reportType = preset.reportType || "custom";
   req.session.reportPeriod = preset.reportPeriod;
   req.session.pageContains = preset.pageContains;
   req.session.trackedKeywords = preset.trackedKeywords;
@@ -668,6 +670,7 @@ app.get("/", async (req, res) => {
       defaultValues: {
         ...(latestPreset || {}),
         selectedSiteUrl: req.session.selectedSiteUrl,
+        reportType: req.session.reportType,
         reportPeriod: req.session.reportPeriod,
         pageContains: req.session.pageContains,
         trackedKeywords: req.session.trackedKeywords,
@@ -687,6 +690,7 @@ app.get("/reports/new", async (req, res) => {
       googleApiError,
       defaultValues: {
         selectedSiteUrl: req.session.selectedSiteUrl,
+        reportType: req.session.reportType,
         reportPeriod: req.session.reportPeriod,
         pageContains: req.session.pageContains,
         trackedKeywords: req.session.trackedKeywords,
@@ -781,12 +785,13 @@ function validateReportRequest(body = {}, authClient = null) {
   return sourceType;
 }
 
-function rememberReportRequestInSession(sessionObject, body, { reportPeriod, pageContains, trackedKeywordsInput } = {}) {
+function rememberReportRequestInSession(sessionObject, body, { reportType, reportPeriod, pageContains, trackedKeywordsInput } = {}) {
   if (!sessionObject) {
     return;
   }
 
   sessionObject.selectedSiteUrl = body.siteUrl || sessionObject.selectedSiteUrl;
+  sessionObject.reportType = reportType;
   sessionObject.reportPeriod = reportPeriod;
   sessionObject.pageContains = pageContains;
   sessionObject.trackedKeywords = trackedKeywordsInput;
@@ -796,13 +801,14 @@ function rememberReportRequestInSession(sessionObject, body, { reportPeriod, pag
 
 async function generateReportFromBody({ body, authClient, sessionObject, onProgress = () => {}, reportDownloadUrl = "" }) {
   const sourceType = validateReportRequest(body, authClient);
+  const reportType = ["monthly", "quarterly", "custom"].includes(body.reportType) ? body.reportType : "custom";
   const reportPeriod = body.reportPeriod || "30d";
   const pageContains = String(body.pageContains || "").trim();
   const trackedKeywordsInput = body.trackedKeywords || "";
-  rememberReportRequestInSession(sessionObject, body, { reportPeriod, pageContains, trackedKeywordsInput });
+  rememberReportRequestInSession(sessionObject, body, { reportType, reportPeriod, pageContains, trackedKeywordsInput });
 
   const result = await generateReportFromInput({
-    input: { ...body, sourceType, reportPeriod, pageContains },
+    input: { ...body, sourceType, reportType, reportPeriod, pageContains },
     authClient,
     onProgress,
     reportDownloadUrl,

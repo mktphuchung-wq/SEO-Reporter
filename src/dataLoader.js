@@ -3,6 +3,7 @@ import path from "node:path";
 import { fetchGscKeywordRows, fetchGscRows } from "./datasources/gscApi.js";
 import { loadContentMetadataRows, loadLookerCsvRows } from "./lib/csv.js";
 import dayjs, { clampDateRangeByDays, parseDate } from "./lib/time.js";
+import { formatMonthLabel, getMostRecentCompletedMonth, getPreviousMonthRange } from "./lib/reportPeriods.js";
 
 function coalesceRows(rows) {
   const grouped = new Map();
@@ -105,7 +106,11 @@ function getGscDefaultEndDate() {
   return dayjs().subtract(getGscDataDelayDays(), "day").format("YYYY-MM-DD");
 }
 
-export function resolveGscRange({ startDate, endDate, reportPeriod } = {}) {
+export function resolveGscRange({ startDate, endDate, reportPeriod, reportType } = {}) {
+  if (reportType === "monthly") {
+    return getMostRecentCompletedMonth(dayjs(), getGscDataDelayDays());
+  }
+
   return resolveRange({
     startDate,
     endDate,
@@ -190,7 +195,12 @@ export async function loadReportData({
   pageContains,
   gscKeyFile,
   authClient,
+  reportType,
 }) {
+  const normalizedReportType = ["monthly", "quarterly", "custom"].includes(reportType) ? reportType : "custom";
+  if (normalizedReportType === "quarterly") {
+    throw new Error("Quarterly SEO Report is coming soon. Please choose Monthly SEO Report or Custom Report.");
+  }
   const normalizedType = (sourceType || "looker").toLowerCase();
   const normalizedSearchType = (searchType || "web").toLowerCase();
   const trimmedPageContains = String(pageContains || "").trim();
@@ -203,9 +213,9 @@ export async function loadReportData({
       throw new Error("siteUrl is required when sourceType = gsc");
     }
 
-    const range = resolveGscRange({ startDate, endDate, reportPeriod });
+    const range = resolveGscRange({ startDate, endDate, reportPeriod, reportType: normalizedReportType });
 
-    const comparisonRange = previousRangeFor(range);
+    const comparisonRange = normalizedReportType === "monthly" ? getPreviousMonthRange(range) : previousRangeFor(range);
     const fetchRange = {
       start: comparisonRange.start,
       end: range.end,
@@ -236,9 +246,13 @@ export async function loadReportData({
       label: "Google Search Console API",
       property: siteUrl,
       range,
+      previousRange: comparisonRange,
       keywordRange: keywordFetchRange,
+      reportType: normalizedReportType,
+      reportLabel: normalizedReportType === "monthly" ? `Monthly SEO Report - ${formatMonthLabel(range)}` : "Custom Report",
       dataDelayNote: buildGscDataDelayNote(range),
       filters: {
+        reportType: normalizedReportType,
         reportPeriod: reportPeriod || "custom",
         pageContains: trimmedPageContains,
         searchType: normalizedSearchType,
@@ -250,6 +264,7 @@ export async function loadReportData({
         searchType: normalizedSearchType,
         queryRange: fetchRange,
         selectedRange: range,
+        previousRange: comparisonRange,
         comparisonRange,
         keywordFetchRange,
         gscDataDelayDays: getGscDataDelayDays(),
@@ -265,15 +280,19 @@ export async function loadReportData({
     const span = findDateSpan(rows);
 
     if (startDate || endDate || reportPeriod) {
-      const range = resolveRange({ startDate: startDate || span?.start, endDate: endDate || span?.end, reportPeriod });
-      const comparisonRange = previousRangeFor(range);
+      const range = normalizedReportType === "monthly" ? getMostRecentCompletedMonth(dayjs(), getGscDataDelayDays()) : resolveRange({ startDate: startDate || span?.start, endDate: endDate || span?.end, reportPeriod });
+      const comparisonRange = normalizedReportType === "monthly" ? getPreviousMonthRange(range) : previousRangeFor(range);
       const fetchRange = { start: comparisonRange.start, end: range.end };
       rows = rows.filter((row) => row.date >= fetchRange.start && row.date <= fetchRange.end);
       sourceInfo = {
         label: "Looker CSV Export",
         property: absoluteLookerPath,
         range,
+        previousRange: comparisonRange,
+        reportType: normalizedReportType,
+        reportLabel: normalizedReportType === "monthly" ? `Monthly SEO Report - ${formatMonthLabel(range)}` : "Custom Report",
         filters: {
+          reportType: normalizedReportType,
           reportPeriod: reportPeriod || "custom",
           pageContains: trimmedPageContains,
           searchType: normalizedSearchType,
@@ -281,6 +300,7 @@ export async function loadReportData({
         diagnostics: {
           queryRange: fetchRange,
           selectedRange: range,
+          previousRange: comparisonRange,
           comparisonRange,
         },
       };
@@ -289,7 +309,11 @@ export async function loadReportData({
         label: "Looker CSV Export",
         property: absoluteLookerPath,
         range: span,
+        previousRange: span ? previousRangeFor(span) : null,
+        reportType: normalizedReportType,
+        reportLabel: normalizedReportType === "monthly" && span ? `Monthly SEO Report - ${formatMonthLabel(span)}` : "Custom Report",
         filters: {
+          reportType: normalizedReportType,
           reportPeriod: reportPeriod || "custom",
           pageContains: trimmedPageContains,
           searchType: normalizedSearchType,
