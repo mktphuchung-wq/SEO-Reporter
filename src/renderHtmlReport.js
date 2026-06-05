@@ -1,6 +1,9 @@
 import { escapeHtml } from "./ui/html.js";
 
 function formatNumber(value) {
+  if (value === null || value === undefined) {
+    return "N/A";
+  }
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Number(value || 0));
 }
 
@@ -13,14 +16,17 @@ function formatPoint(value, digits = 2) {
 }
 
 function formatSigned(value, digits = 0) {
+  if (value === null || value === undefined) {
+    return "N/A";
+  }
   const numeric = Number(value || 0);
   const sign = numeric > 0 ? "+" : "";
   return `${sign}${numeric.toFixed(digits)}`;
 }
 
-function formatDeltaPercent(deltaPercent) {
+function formatDeltaPercent(deltaPercent, unavailableLabel = "new") {
   if (deltaPercent === null || deltaPercent === undefined) {
-    return "new";
+    return unavailableLabel;
   }
   const sign = deltaPercent > 0 ? "+" : "";
   return `${sign}${Number(deltaPercent || 0).toFixed(1)}%`;
@@ -31,6 +37,9 @@ function formatPosition(value) {
 }
 
 function deltaClass(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
   const numeric = Number(value || 0);
   return numeric > 0 ? "up" : numeric < 0 ? "down" : "flat";
 }
@@ -72,6 +81,14 @@ function rangeLabel(range) {
 
 function yesNo(value) {
   return value ? "Yes" : "No";
+}
+
+function dataSpanLabel(insights = {}, diagnostics = {}) {
+  if (insights.dataSpan) {
+    return rangeLabel(insights.dataSpan);
+  }
+  const rowCount = Number(diagnostics.coalescedPageRowCount || diagnostics.pageRowCount || 0) + Number(diagnostics.keywordRowCount || 0);
+  return rowCount > 0 ? "Data dates unavailable" : "No page or keyword data available";
 }
 
 function rowsToTable(items = [], mapper, emptyMessage = "The selected source, period, or filters did not return rows for this section.") {
@@ -158,31 +175,63 @@ function urlComparisonTable(rows) {
   });
 }
 
+function currentOnlyUrlTable(rows) {
+  return rowsToTable(rows, {
+    header: "<tr><th>#</th><th>URL</th><th>Current clicks</th><th>Current impressions</th><th>CTR</th><th>Avg position</th></tr>",
+    row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatPct(item.currentCtr)}</td><td>${formatPosition(item.currentPosition)}</td></tr>`,
+  });
+}
+
 function renderPerformance3Months(perf) {
+  const hasPreviousData = Boolean(perf.hasPreviousData && perf.delta);
+  const outstandingUrls = perf.outstandingUrls || {};
+  const growthCounts = perf.growthCounts || {};
+  const deltaLabel = (metric, formatter = formatSigned) => {
+    if (!hasPreviousData) {
+      return '<small>Previous period unavailable</small>';
+    }
+    const delta = perf.delta?.[metric];
+    if (!delta) {
+      return '<small>Previous period unavailable</small>';
+    }
+    const value = metric === "ctr" ? formatPoint(delta.absolute) : formatter(delta.absolute);
+    const pct = metric === "clicks" || metric === "impressions" ? ` (${formatDeltaPercent(delta.percent, "N/A")})` : "";
+    return `<small class="${deltaClass(delta.absolute)}">${value}${pct}</small>`;
+  };
+  const growthValue = (value) => hasPreviousData ? formatNumber(value) : "Previous period unavailable";
+  const chartUnavailableNote = '<p class="note-box">Chart unavailable because this report does not include daily/monthly series.</p>';
+  const hasDailySeries = Array.isArray(perf.dailySeries) && perf.dailySeries.length > 0;
+  const hasMonthlySeries = Array.isArray(perf.monthly) && perf.monthly.length > 0;
+  const chartHtml = hasDailySeries || hasMonthlySeries
+    ? `<div class="two-col" style="margin-top:12px;">${hasDailySeries ? '<div class="chart-box"><canvas id="dailyChart"></canvas></div>' : chartUnavailableNote}${hasMonthlySeries ? '<div class="chart-box"><canvas id="monthlyChart"></canvas></div>' : chartUnavailableNote}</div>`
+    : chartUnavailableNote;
+  const tableRenderer = hasPreviousData ? urlComparisonTable : currentOnlyUrlTable;
+
   return `<section>
     <h2>SEO Performance - Last 3 Months vs Previous 3 Months</h2>
     ${perf.note ? `<p class="note-box">${escapeHtml(perf.note)}</p>` : ""}
-    <p class="muted">Current: ${escapeHtml(rangeLabel(perf.currentRange))} | Previous: ${escapeHtml(rangeLabel(perf.previousRange))}</p>
+    <p class="muted">Current: ${escapeHtml(rangeLabel(perf.currentRange))} | Previous: ${hasPreviousData ? escapeHtml(rangeLabel(perf.previousRange)) : "Previous period unavailable"}</p>
     <div class="kpis">
-      <div class="kpi"><span>Current clicks</span><strong>${formatNumber(perf.current.clicks)}</strong><small class="${deltaClass(perf.delta.clicks.absolute)}">${formatSigned(perf.delta.clicks.absolute)} (${formatDeltaPercent(perf.delta.clicks.percent)})</small></div>
-      <div class="kpi"><span>Current impressions</span><strong>${formatNumber(perf.current.impressions)}</strong><small class="${deltaClass(perf.delta.impressions.absolute)}">${formatSigned(perf.delta.impressions.absolute)} (${formatDeltaPercent(perf.delta.impressions.percent)})</small></div>
-      <div class="kpi"><span>CTR</span><strong>${formatPct(perf.current.ctr)}</strong><small class="${deltaClass(perf.delta.ctr.absolute)}">${formatPoint(perf.delta.ctr.absolute)}</small></div>
-      <div class="kpi"><span>Avg position</span><strong>${formatPosition(perf.current.position)}</strong><small class="${deltaClass(perf.delta.position.absolute)}">${formatSigned(perf.delta.position.absolute, 2)}</small></div>
-      <div class="kpi"><span>URLs growth &gt; 20%</span><strong>${formatNumber(perf.growthCounts.clickGrowthOver20)}</strong></div>
-      <div class="kpi"><span>URLs loss &gt; 20%</span><strong>${formatNumber(perf.growthCounts.clickLossOver20)}</strong></div>
-      <div class="kpi"><span>Newly gaining clicks</span><strong>${formatNumber(perf.growthCounts.newlyGainingClicks)}</strong></div>
-      <div class="kpi"><span>Dropped to zero clicks</span><strong>${formatNumber(perf.growthCounts.droppedToZeroClicks)}</strong></div>
+      <div class="kpi"><span>Current clicks</span><strong>${formatNumber(perf.current.clicks)}</strong>${deltaLabel("clicks")}</div>
+      <div class="kpi"><span>Current impressions</span><strong>${formatNumber(perf.current.impressions)}</strong>${deltaLabel("impressions")}</div>
+      <div class="kpi"><span>CTR</span><strong>${formatPct(perf.current.ctr)}</strong>${deltaLabel("ctr")}</div>
+      <div class="kpi"><span>Avg position</span><strong>${formatPosition(perf.current.position)}</strong>${deltaLabel("position", (value) => formatSigned(value, 2))}</div>
+      <div class="kpi"><span>URLs growth &gt; 20%</span><strong>${growthValue(growthCounts.clickGrowthOver20)}</strong></div>
+      <div class="kpi"><span>URLs loss &gt; 20%</span><strong>${growthValue(growthCounts.clickLossOver20)}</strong></div>
+      <div class="kpi"><span>Newly gaining clicks</span><strong>${growthValue(growthCounts.newlyGainingClicks)}</strong></div>
+      <div class="kpi"><span>Dropped to zero clicks</span><strong>${growthValue(growthCounts.droppedToZeroClicks)}</strong></div>
     </div>
-    <div class="two-col" style="margin-top:12px;"><div class="chart-box"><canvas id="dailyChart"></canvas></div><div class="chart-box"><canvas id="monthlyChart"></canvas></div></div>
+    ${chartHtml}
   </section>
   ${renderTabbedTables({
     id: "outstanding-urls-3-months",
     title: "Outstanding URLs In Current 3 Months",
+    description: hasPreviousData ? "Compared against the previous 3-month period." : "Previous period unavailable; showing current-period metrics only.",
     tabs: [
-      { id: "clicks", label: "By Clicks", html: urlComparisonTable(perf.outstandingUrls.topByClicks) },
-      { id: "impressions", label: "By Impressions", html: urlComparisonTable(perf.outstandingUrls.topByImpressions) },
-      { id: "fastest-growing", label: "Fastest Growing", html: urlComparisonTable(perf.outstandingUrls.fastestGrowing) },
-      { id: "fastest-declining", label: "Fastest Declining", html: urlComparisonTable(perf.outstandingUrls.fastestDeclining) },
+      { id: "clicks", label: "By Clicks", html: tableRenderer(outstandingUrls.topByClicks) },
+      { id: "impressions", label: "By Impressions", html: tableRenderer(outstandingUrls.topByImpressions) },
+      { id: "fastest-growing", label: "Fastest Growing", html: hasPreviousData ? urlComparisonTable(outstandingUrls.fastestGrowing) : '<p class="empty">Previous period unavailable</p>' },
+      { id: "fastest-declining", label: "Fastest Declining", html: hasPreviousData ? urlComparisonTable(outstandingUrls.fastestDeclining) : '<p class="empty">Previous period unavailable</p>' },
     ],
   })}`;
 }
@@ -443,7 +492,7 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, k
 *{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden}body{margin:0;font-family:"IBM Plex Sans",sans-serif;color:var(--ink);background:radial-gradient(circle at 8% 12%,rgba(255,123,84,.28),transparent 28%),radial-gradient(circle at 86% 4%,rgba(21,96,100,.2),transparent 32%),linear-gradient(140deg,var(--bg-1),var(--bg-2))}.wrapper{width:min(1220px,95vw);margin:0 auto;padding:28px 0 60px}header{background:linear-gradient(120deg,rgba(16,32,39,.95),rgba(21,96,100,.86));color:#fff;border-radius:20px;padding:28px;margin-bottom:18px;overflow:hidden;box-shadow:0 18px 40px rgba(12,22,26,.25)}h1,h2,h3{font-family:"Space Grotesk",sans-serif;letter-spacing:-.01em;margin:0}h1{font-size:clamp(1.4rem,3vw,2rem)}h2{font-size:clamp(1.1rem,2.4vw,1.4rem);margin-bottom:10px}h3{font-size:1rem;margin-bottom:8px}.meta{margin-top:8px;color:rgba(255,255,255,.9);font-size:.95rem;display:flex;flex-wrap:wrap;gap:14px}section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-top:16px;backdrop-filter:blur(8px);max-width:100%;overflow:hidden}.two-col{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px}.kpi{background:rgba(255,255,255,.8);border:1px solid var(--line);border-radius:12px;padding:10px}.kpi span{display:block;font-size:.8rem;color:var(--muted)}.kpi strong{font-size:1rem}.kpi small{display:block;margin-top:4px}.up{color:var(--up);font-weight:700}.down{color:var(--down);font-weight:700}.flat{color:var(--flat);font-weight:700}.chart-box{height:320px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}.table-scroll{overflow-x:auto;max-width:100%;border-radius:12px}.table-scroll table{min-width:880px}table{width:100%;border-collapse:collapse;background:rgba(255,255,255,.74);border-radius:12px;overflow:hidden}th,td{text-align:left;border-bottom:1px solid var(--line);padding:8px;vertical-align:top}th{background:rgba(16,32,39,.94);color:#fff;font-weight:600}td.url{width:34%;max-width:340px;word-break:break-word;overflow-wrap:anywhere;font-size:.84rem;line-height:1.35}td.url a{color:var(--accent);font-weight:600;text-decoration:none}.muted,.empty{color:var(--muted);font-size:.88rem}.note-box{border-left:4px solid var(--accent);padding:10px 12px;background:rgba(184,216,216,.28);border-radius:10px;color:var(--muted)}.note-box.danger{border-color:rgba(179,54,54,.45);background:rgba(179,54,54,.09)}.report-actions{margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap}.action-link,.download-link{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:10px 14px;color:#fff;background:var(--accent);font-weight:700;text-decoration:none;box-shadow:0 10px 24px rgba(21,96,100,.22);border:1px solid rgba(21,96,100,.1)}.action-link.secondary{background:#fff;color:var(--accent);border-color:rgba(21,96,100,.28);box-shadow:none}.action-link.disabled{background:rgba(106,114,128,.15);color:var(--flat);box-shadow:none;cursor:not-allowed}.empty-table{border:1px dashed rgba(79,98,114,.35);border-radius:12px;background:rgba(255,255,255,.72);padding:16px;color:var(--muted)}.empty-table strong{display:block;color:var(--ink);margin-bottom:4px}.priority{display:inline-block;border-radius:999px;padding:2px 8px;font-size:.75rem;font-weight:700;text-transform:uppercase;background:rgba(106,114,128,.16)}.priority-high{background:rgba(179,54,54,.16);color:var(--down)}.priority-medium{background:rgba(255,123,84,.2);color:#8a3f1d}.priority-low{background:rgba(31,122,31,.14);color:var(--up)}.report-tabs{display:flex;gap:8px;margin:14px 0 12px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}.report-tab-button{appearance:none;border:1px solid rgba(21,96,100,.28);border-radius:999px;background:#fff;color:var(--accent);cursor:pointer;flex:0 0 auto;font:700 .88rem "IBM Plex Sans",sans-serif;padding:9px 14px;transition:background .18s ease,color .18s ease,box-shadow .18s ease}.report-tab-button.active{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 8px 18px rgba(21,96,100,.22)}.report-tab-button:focus-visible{outline:3px solid rgba(255,123,84,.45);outline-offset:2px}.report-tab-panel{max-width:100%}.report-tab-panel[hidden]{display:none!important}@media(max-width:700px){.wrapper{width:94vw;padding-top:16px}header,section{padding:14px}.two-col{grid-template-columns:1fr}.kpis{grid-template-columns:1fr}.report-tabs{margin-left:-2px;margin-right:-2px;padding:0 2px 6px}.report-tab-button{padding:8px 12px;font-size:.84rem}th,td{font-size:.83rem;padding:7px}.table-scroll table{min-width:760px}td.url{max-width:240px;font-size:.84rem}.chart-box{height:260px}}
 </style></head><body><div class="wrapper">
   <div class="report-actions" aria-label="Report actions">${saveReportForm}<a class="action-link secondary" href="/">Back to dashboard</a><a class="action-link" href="/reports/new">Create another preview</a>${reportDownloadUrl ? `<a class="action-link secondary" href="/reports">Saved in report history</a><a class="download-link" href="${escapeHtml(reportDownloadUrl)}">Download HTML + CSS + Script</a>` : ""}${keywordCsvDownloadUrl ? `<a class="download-link" href="${escapeHtml(keywordCsvDownloadUrl)}">Download keyword CSV</a>` : ""}</div>
-  <header><h1>SEO Insight Report</h1><div class="meta"><span>Generated: ${escapeHtml(insights.generatedAt)}</span><span>Source: ${escapeHtml(sourceInfo.label)}</span><span>Property: ${escapeHtml(sourceInfo.property)}</span><span>Date range: ${escapeHtml(rangeLabel(sourceInfo.range))}</span><span>Data span: ${escapeHtml(insights.dataSpan ? rangeLabel(insights.dataSpan) : "No data")}</span></div></header>
+  <header><h1>SEO Insight Report</h1><div class="meta"><span>Generated: ${escapeHtml(insights.generatedAt)}</span><span>Source: ${escapeHtml(sourceInfo.label)}</span><span>Property: ${escapeHtml(sourceInfo.property)}</span><span>Date range: ${escapeHtml(rangeLabel(sourceInfo.range))}</span><span>Data span: ${escapeHtml(dataSpanLabel(insights, diagnostics))}</span></div></header>
   <section><h2>Active Filters</h2>${dataDelayNote ? `<p class="note-box" style="margin-bottom:10px;">${escapeHtml(dataDelayNote)}</p>` : ""}<div class="kpis"><div class="kpi"><span>Property</span><strong>${escapeHtml(sourceInfo.property || "—")}</strong></div><div class="kpi"><span>Search type</span><strong>${escapeHtml(filters.searchType || "web")}</strong></div><div class="kpi"><span>Date range</span><strong>${escapeHtml(rangeLabel(sourceInfo.range))}</strong></div><div class="kpi"><span>Fetched analysis range</span><strong>${escapeHtml(rangeLabel(diagnostics.queryRange))}</strong></div><div class="kpi"><span>Report period</span><strong>${escapeHtml(filters.reportPeriodLabel || filters.reportPeriod || "custom")}</strong></div><div class="kpi"><span>Page contains filter</span><strong>${escapeHtml(filters.pageContains || "None")}</strong></div><div class="kpi"><span>Tracked keyword count</span><strong>${formatNumber(filters.trackedKeywordCount || 0)}</strong></div></div></section>
   ${renderEmptyReportSection({ sourceInfo, filters, diagnostics })}
   ${renderAiInsights(aiInsights)}

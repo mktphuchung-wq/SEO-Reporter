@@ -84,7 +84,7 @@ export function buildComparableRange(currentRange) {
   return clampDateRangeByDays(previousEnd, days);
 }
 
-function inferDateSpan(rows) {
+export function inferDateSpan(rows) {
   const validRows = (rows || []).filter((row) => row.date);
   if (!validRows.length) {
     return null;
@@ -108,6 +108,10 @@ function inferDateSpan(rows) {
 export function hasEnoughDataForRange(rows, requiredStart, requiredEnd) {
   const span = inferDateSpan(rows);
   return Boolean(span && requiredStart && requiredEnd && span.start <= requiredStart && span.end >= requiredEnd);
+}
+
+export function hasSufficientPreviousPeriodData(rows, previousRange) {
+  return Boolean(previousRange?.start && previousRange?.end && hasEnoughDataForRange(rows, previousRange.start, previousRange.end));
 }
 
 export function buildDailySeries(rows, start, end) {
@@ -209,7 +213,7 @@ function compareUrlMaps(currentMap, previousMap) {
     const previous = finalizeUrlSummary(previousMap.get(url) || { url });
     const clickDelta = current.clicks - previous.clicks;
     const impressionDelta = current.impressions - previous.impressions;
-    const positionChange = previous.position - current.position;
+    const positionChange = previous.impressions > 0 && current.impressions > 0 ? previous.position - current.position : null;
 
     if (current.clicks === 0 && previous.clicks === 0 && current.impressions === 0 && previous.impressions === 0) {
       continue;
@@ -286,7 +290,7 @@ function decorateUrlComparison(row) {
     recommendation:
       row.currentImpressions >= 100 && row.currentCtr < 0.02
         ? "Improve title/meta to better match high-impression queries."
-        : row.positionChange < 0
+        : row.positionChange !== null && row.positionChange < 0
           ? "Review ranking loss and refresh content/internal links."
           : "Prioritize based on traffic impact and current query intent.",
   };
@@ -300,32 +304,51 @@ export function build3MonthComparison(rows, endDate) {
   const previousRows = filterRowsByRange(rows, previousRange.start, previousRange.end);
   const current = summarizeRows(currentRows);
   const previous = summarizeRows(previousRows);
-  const hasPreviousData = hasEnoughDataForRange(rows, previousRange.start, previousRange.end);
+  const hasPreviousData = hasSufficientPreviousPeriodData(rows, previousRange);
   const currentMap = summarizeByUrl(rows, currentRange.start, currentRange.end);
-  const previousMap = summarizeByUrl(rows, previousRange.start, previousRange.end);
-  const compared = compareUrlMaps(currentMap, previousMap).map(decorateUrlComparison);
+  const previousMap = hasPreviousData ? summarizeByUrl(rows, previousRange.start, previousRange.end) : new Map();
+  const compared = hasPreviousData
+    ? compareUrlMaps(currentMap, previousMap).map(decorateUrlComparison)
+    : Array.from(currentMap.values()).map((row) => decorateUrlComparison({
+        url: row.url,
+        currentClicks: row.clicks,
+        previousClicks: null,
+        clickDelta: null,
+        clickPct: null,
+        currentImpressions: row.impressions,
+        previousImpressions: null,
+        impressionDelta: null,
+        impressionPct: null,
+        currentCtr: row.impressions > 0 ? row.clicks / row.impressions : 0,
+        previousCtr: null,
+        currentPosition: row.impressions > 0 ? Number(row.weightedPosition || 0) / row.impressions : null,
+        previousPosition: null,
+        positionChange: null,
+        isNew: false,
+        isDropToZero: false,
+      }));
 
   return {
     currentRange,
     previousRange,
     current,
-    previous,
-    delta: buildDelta(current, previous),
+    previous: hasPreviousData ? previous : null,
+    delta: hasPreviousData ? buildDelta(current, previous) : null,
     dailySeries: buildDailySeries(rows, currentRange.start, currentRange.end),
     monthly: buildMonthlySeries(rows, currentRange),
     hasPreviousData,
-    note: hasPreviousData ? null : "Not enough historical data to compare previous 3 months.",
+    note: hasPreviousData ? null : "Previous period unavailable. Not enough historical data to compare previous 3 months; current-period metrics only.",
     outstandingUrls: {
       topByClicks: [...compared].sort((a, b) => b.currentClicks - a.currentClicks || b.currentImpressions - a.currentImpressions).slice(0, 12),
       topByImpressions: [...compared].sort((a, b) => b.currentImpressions - a.currentImpressions || b.currentClicks - a.currentClicks).slice(0, 12),
-      fastestGrowing: [...compared].filter((row) => row.clickDelta > 0).sort((a, b) => b.clickDelta - a.clickDelta || b.impressionDelta - a.impressionDelta).slice(0, 12),
-      fastestDeclining: [...compared].filter((row) => row.clickDelta < 0).sort((a, b) => a.clickDelta - b.clickDelta || a.impressionDelta - b.impressionDelta).slice(0, 12),
+      fastestGrowing: hasPreviousData ? [...compared].filter((row) => row.clickDelta > 0).sort((a, b) => b.clickDelta - a.clickDelta || b.impressionDelta - a.impressionDelta).slice(0, 12) : [],
+      fastestDeclining: hasPreviousData ? [...compared].filter((row) => row.clickDelta < 0).sort((a, b) => a.clickDelta - b.clickDelta || a.impressionDelta - b.impressionDelta).slice(0, 12) : [],
     },
     growthCounts: {
-      clickGrowthOver20: compared.filter((row) => row.previousClicks > 0 && row.clickPct > 20).length,
-      clickLossOver20: compared.filter((row) => row.previousClicks > 0 && row.clickPct < -20).length,
-      newlyGainingClicks: compared.filter((row) => row.isNew).length,
-      droppedToZeroClicks: compared.filter((row) => row.isDropToZero).length,
+      clickGrowthOver20: hasPreviousData ? compared.filter((row) => row.previousClicks > 0 && row.clickPct > 20).length : null,
+      clickLossOver20: hasPreviousData ? compared.filter((row) => row.previousClicks > 0 && row.clickPct < -20).length : null,
+      newlyGainingClicks: hasPreviousData ? compared.filter((row) => row.isNew).length : null,
+      droppedToZeroClicks: hasPreviousData ? compared.filter((row) => row.isDropToZero).length : null,
     },
   };
 }
@@ -501,8 +524,10 @@ export function build6MonthUrlInsights(rows, endDate) {
   };
 }
 
-export function buildSeoInsights({ rows, endDate, currentRange }) {
-  const dataSpan = inferDateSpan(rows);
+export function buildSeoInsights({ rows, keywordRows = [], endDate, currentRange }) {
+  const pageDataSpan = inferDateSpan(rows);
+  const keywordDataSpan = inferDateSpan(keywordRows);
+  const dataSpan = pageDataSpan || keywordDataSpan;
   const safeEnd = (parseDate(endDate) ?? (dataSpan ? parseDate(dataSpan.end) : dayjs())).format("YYYY-MM-DD");
   const selectedRange = currentRange || { start: dataSpan?.start || safeEnd, end: safeEnd };
   const selectedPeriodOverview = buildSelectedPeriodOverview(rows, selectedRange);
@@ -520,6 +545,7 @@ export function buildSeoInsights({ rows, endDate, currentRange }) {
     generatedAt: dayjs().format("YYYY-MM-DD HH:mm:ss"),
     reportEndDate: safeEnd,
     dataSpan,
+    dataSpanSource: pageDataSpan ? "page" : keywordDataSpan ? "keyword" : "none",
     selectedPeriodOverview,
     performance3MonthComparison,
     last30Contribution,

@@ -4,7 +4,7 @@ const DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:
 const DEFAULT_OPENROUTER_MAX_OUTPUT_TOKENS = 3500;
 const MAX_TABLE_ROWS_FOR_AI = 10;
 const SAFE_OPENROUTER_FAILURE_MESSAGE = "OpenRouter AI insight failed, but the SEO report was generated.";
-const SYSTEM_PROMPT = "You are a senior SEO analyst. Your job is to analyze a completed Google Search Console report and write practical, evidence-based SEO insights in Vietnamese. Do not invent data. Only use the metrics, tables, URLs, and queries provided. Focus on what changed, why it matters, what needs attention, and what actions the SEO/content team should take next. Write in a concise but useful consulting style. Avoid generic SEO advice. Prioritize recommendations by expected impact.";
+const SYSTEM_PROMPT = "You are a senior SEO analyst. Your job is to analyze a completed Google Search Console report and write practical, evidence-based SEO insights in Vietnamese Markdown. Do not invent data. Only use the metrics, tables, URLs, and queries provided. If previous-period data is insufficient, explicitly say so and only discuss current-period metrics for that section. Do not invent YoY, quarterly, or other comparisons unless the provided data contains them. When comparing metrics, always write Previous → Current. Never reverse the direction. Correct: Clicks increased from 25,374 to 27,404 (+8.0%). Wrong: Clicks 27,404 → 25,374. Focus on what changed, why it matters, what needs attention, and what actions the SEO/content team should take next. Write in a concise but useful consulting style. Avoid generic SEO advice. Prioritize recommendations by expected impact.";
 
 function getPositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -51,6 +51,18 @@ function compactLowCtrRows(rows) {
     position: row.position,
     recommendation: row.recommendation,
   }));
+}
+
+
+function labeledMetricComparison(current = {}, previous = {}, delta = {}, hasPreviousData = true) {
+  const metrics = ["clicks", "impressions", "ctr", "position"];
+  return Object.fromEntries(metrics.map((metric) => [metric, {
+    previous: hasPreviousData ? previous?.[metric] ?? null : null,
+    current: current?.[metric] ?? null,
+    delta: hasPreviousData ? delta?.[metric]?.absolute ?? null : null,
+    deltaPercent: hasPreviousData ? delta?.[metric]?.percent ?? null : null,
+    hasPreviousData,
+  }]));
 }
 
 function compactKeywordRows(rows) {
@@ -141,14 +153,30 @@ function buildCompactReportSummary(reportSummary = {}) {
       },
     },
     filters: filters || sourceInfo?.filters || {},
-    selectedPeriodOverview: selectedPeriodOverview || {},
+    selectedPeriodOverview: {
+      ...(selectedPeriodOverview || {}),
+      metricComparisons: labeledMetricComparison(
+        selectedPeriodOverview?.current,
+        selectedPeriodOverview?.previous,
+        selectedPeriodOverview?.delta,
+        selectedPeriodOverview?.hasPreviousData !== false,
+      ),
+    },
     performance3MonthComparison: {
       currentRange: performance3MonthComparison?.currentRange,
       previousRange: performance3MonthComparison?.previousRange,
+      hasPreviousData: Boolean(performance3MonthComparison?.hasPreviousData),
+      dataAvailabilityNote: performance3MonthComparison?.hasPreviousData ? null : "Previous period unavailable",
+      metricComparisons: labeledMetricComparison(
+        performance3MonthComparison?.current,
+        performance3MonthComparison?.previous,
+        performance3MonthComparison?.delta,
+        Boolean(performance3MonthComparison?.hasPreviousData),
+      ),
       current: performance3MonthComparison?.current,
-      previous: performance3MonthComparison?.previous,
-      delta: performance3MonthComparison?.delta,
-      growthCounts: performance3MonthComparison?.growthCounts,
+      previous: performance3MonthComparison?.hasPreviousData ? performance3MonthComparison?.previous : null,
+      delta: performance3MonthComparison?.hasPreviousData ? performance3MonthComparison?.delta : null,
+      growthCounts: performance3MonthComparison?.hasPreviousData ? performance3MonthComparison?.growthCounts : null,
       note: performance3MonthComparison?.note,
       outstandingUrls: {
         topByClicks: compactUrlTable(performance3MonthComparison?.outstandingUrls?.topByClicks),
@@ -186,6 +214,8 @@ function buildUserPrompt(compactReportSummary) {
   return `Phân tích báo cáo Google Search Console dưới đây.
 
 Yêu cầu đầu ra bằng tiếng Việt, dạng Markdown, không cần JSON.
+
+Chỉ sử dụng dữ liệu được cung cấp. Không tự tạo YoY, quý, hoặc so sánh khác nếu dữ liệu không có. Nếu hasPreviousData=false hoặc dataAvailabilityNote báo thiếu dữ liệu kỳ trước, hãy ghi rõ dữ liệu kỳ trước không đủ và chỉ nêu chỉ số hiện tại cho phần đó. Khi so sánh metric, luôn viết theo chiều Previous → Current; không bao giờ đảo thành Current → Previous.
 
 Cấu trúc bắt buộc:
 
