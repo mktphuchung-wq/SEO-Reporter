@@ -232,8 +232,9 @@ function buildCompactReportSummary(reportSummary = {}) {
 
 function buildUserPrompt(compactReportSummary) {
   const filters = compactReportSummary.filters || {};
-  const isMonthly = filters.reportType === "monthly" || filters.reportPeriod === "monthly" || filters.reportPeriod === "30d";
-  const isQuarterly = filters.reportType === "quarterly";
+  const explicitReportType = ["monthly", "quarterly", "custom"].includes(filters.reportType) ? filters.reportType : null;
+  const isMonthly = explicitReportType ? explicitReportType === "monthly" : filters.reportPeriod === "monthly" || filters.reportPeriod === "30d";
+  const isQuarterly = explicitReportType === "quarterly" || (!explicitReportType && filters.reportPeriod === "quarterly");
   const monthlyInstructions = isMonthly ? `
 
 Vì reportType = monthly, bắt buộc thêm các ý sau trong phân tích:

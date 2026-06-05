@@ -194,6 +194,13 @@ function previousRangeFor(range) {
   return clampDateRangeByDays(previousEnd, days);
 }
 
+function reportPeriodForType(reportType, reportPeriod) {
+  if (reportType === "monthly" || reportType === "quarterly") {
+    return reportType;
+  }
+  return reportPeriod || "custom";
+}
+
 export async function loadReportData({
   sourceType,
   siteUrl,
@@ -269,7 +276,7 @@ export async function loadReportData({
       dataDelayNote: buildGscDataDelayNote(range),
       filters: {
         reportType: normalizedReportType,
-        reportPeriod: reportPeriod || "custom",
+        reportPeriod: reportPeriodForType(normalizedReportType, reportPeriod),
         pageContains: trimmedPageContains,
         searchType: normalizedSearchType,
       },
@@ -321,7 +328,7 @@ export async function loadReportData({
             : "Custom Report",
         filters: {
           reportType: normalizedReportType,
-          reportPeriod: reportPeriod || "custom",
+          reportPeriod: reportPeriodForType(normalizedReportType, reportPeriod),
           pageContains: trimmedPageContains,
           searchType: normalizedSearchType,
         },
@@ -346,7 +353,7 @@ export async function loadReportData({
             : "Custom Report",
         filters: {
           reportType: normalizedReportType,
-          reportPeriod: reportPeriod || "custom",
+          reportPeriod: reportPeriodForType(normalizedReportType, reportPeriod),
           pageContains: trimmedPageContains,
           searchType: normalizedSearchType,
         },

@@ -295,10 +295,12 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
       })
     : { available: false, message: "AI insight not requested." };
 
+  const effectiveReportPeriod = reportType === "monthly" ? "monthly" : reportType === "quarterly" ? "quarterly" : reportPeriod;
+
   const filters = {
     ...(sourceInfo.filters || {}),
     reportType,
-    reportPeriod,
+    reportPeriod: effectiveReportPeriod,
     reportPeriodLabel: reportType === "monthly"
       ? "Monthly SEO Report"
       : reportType === "quarterly"

@@ -317,7 +317,8 @@ function reasonTags(tags) {
 }
 
 function isMonthlyReport(filters = {}) {
-  return filters.reportType === "monthly" || filters.reportPeriod === "monthly" || filters.reportPeriod === "30d";
+  const explicitReportType = ["monthly", "quarterly", "custom"].includes(filters.reportType) ? filters.reportType : null;
+  return explicitReportType ? explicitReportType === "monthly" : filters.reportPeriod === "monthly" || filters.reportPeriod === "30d";
 }
 
 function monthlyMetricKpi(label, metric, { formatter = formatNumber, deltaFormatter = formatSigned, showPercent = true, deltaKey = "delta" } = {}) {
