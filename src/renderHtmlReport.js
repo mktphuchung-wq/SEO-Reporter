@@ -147,19 +147,27 @@ function renderEmptyReportSection({ sourceInfo, filters, diagnostics }) {
 }
 
 function renderOverview(overview) {
-  const metricRows = [
-    ["Clicks", formatNumber(overview.current.clicks), formatNumber(overview.previous.clicks), formatSigned(overview.delta.clicks.absolute), formatDeltaPercent(overview.delta.clicks.percent), overview.delta.clicks.absolute],
-    ["Impressions", formatNumber(overview.current.impressions), formatNumber(overview.previous.impressions), formatSigned(overview.delta.impressions.absolute), formatDeltaPercent(overview.delta.impressions.percent), overview.delta.impressions.absolute],
-    ["CTR", formatPct(overview.current.ctr), formatPct(overview.previous.ctr), formatPoint(overview.delta.ctr.absolute), formatDeltaPercent(overview.delta.ctr.percent), overview.delta.ctr.absolute],
-    ["Avg Position", formatPosition(overview.current.position), formatPosition(overview.previous.position), formatSigned(overview.delta.position.absolute, 2), formatDeltaPercent(overview.delta.position.percent), overview.delta.position.absolute],
-  ];
+  const hasPreviousData = overview.hasPreviousData !== false;
+  const metricRows = hasPreviousData
+    ? [
+        ["Clicks", formatNumber(overview.current.clicks), formatNumber(overview.previous.clicks), formatSigned(overview.delta.clicks.absolute), formatDeltaPercent(overview.delta.clicks.percent), overview.delta.clicks.absolute],
+        ["Impressions", formatNumber(overview.current.impressions), formatNumber(overview.previous.impressions), formatSigned(overview.delta.impressions.absolute), formatDeltaPercent(overview.delta.impressions.percent), overview.delta.impressions.absolute],
+        ["CTR", formatPct(overview.current.ctr), formatPct(overview.previous.ctr), formatPoint(overview.delta.ctr.absolute), formatDeltaPercent(overview.delta.ctr.percent), overview.delta.ctr.absolute],
+        ["Avg Position", formatPosition(overview.current.position), formatPosition(overview.previous.position), formatSigned(overview.delta.position.absolute, 2), formatDeltaPercent(overview.delta.position.percent), overview.delta.position.absolute],
+      ]
+    : [
+        ["Clicks", formatNumber(overview.current.clicks), "Previous period unavailable", "—", "—", null],
+        ["Impressions", formatNumber(overview.current.impressions), "Previous period unavailable", "—", "—", null],
+        ["CTR", formatPct(overview.current.ctr), "Previous period unavailable", "—", "—", null],
+        ["Avg Position", formatPosition(overview.current.position), "Previous period unavailable", "—", "—", null],
+      ];
 
   return `<section>
     <h2>Report Period Overview</h2>
     ${overview.note ? `<p class="note-box">${escapeHtml(overview.note)}</p>` : ""}
     <div class="kpis">
       <div class="kpi"><span>Selected report period</span><strong>${escapeHtml(rangeLabel(overview.currentRange))}</strong></div>
-      <div class="kpi"><span>Previous comparable period</span><strong>${escapeHtml(rangeLabel(overview.previousRange))}</strong></div>
+      <div class="kpi"><span>Previous comparable period</span><strong>${hasPreviousData ? escapeHtml(rangeLabel(overview.previousRange)) : "Unavailable"}</strong></div>
     </div>
     <table style="margin-top:12px;"><thead><tr><th>Metric</th><th>Current</th><th>Previous</th><th>Delta</th><th>Delta %</th></tr></thead><tbody>
       ${metricRows.map(([label, current, previous, delta, pct, direction]) => `<tr><td>${label}</td><td>${current}</td><td>${previous}</td><td class="${deltaClass(direction)}">${delta}</td><td>${escapeHtml(pct)}</td></tr>`).join("")}
@@ -300,6 +308,89 @@ function renderUrlMovement(movement) {
   });
 }
 
+
+
+function reasonTags(tags) {
+  const list = Array.isArray(tags) ? tags : [tags].filter(Boolean);
+  return list.length ? list.map((tag) => `<span class="reason-tag">${escapeHtml(tag)}</span>`).join(" ") : '<span class="reason-tag">Review</span>';
+}
+
+function isMonthlyReport(filters = {}) {
+  return filters.reportType === "monthly" || filters.reportPeriod === "monthly" || filters.reportPeriod === "30d";
+}
+
+function monthlyMetricKpi(label, metric, { formatter = formatNumber, deltaFormatter = formatSigned, showPercent = true, deltaKey = "delta" } = {}) {
+  const hasPreviousData = Boolean(metric?.previous !== null && metric?.previous !== undefined && metric?.[deltaKey] !== null && metric?.[deltaKey] !== undefined);
+  const delta = metric?.[deltaKey];
+  const deltaText = hasPreviousData
+    ? `${deltaFormatter(delta)}${showPercent && metric.deltaPercent !== null && metric.deltaPercent !== undefined ? ` (${formatDeltaPercent(metric.deltaPercent, "N/A")})` : ""}`
+    : "Previous month unavailable";
+  return `<div class="kpi"><span>${escapeHtml(label)}</span><strong>${formatter(metric?.current)}</strong><small>${hasPreviousData ? `Previous: ${formatter(metric.previous)}` : "Current month only"}</small><small class="${hasPreviousData ? deltaClass(delta) : "flat"}">${deltaText}</small></div>`;
+}
+
+function summarySignalList(items = []) {
+  if (!items.length) {
+    return '<p class="empty">No meaningful items found for this month.</p>';
+  }
+  return `<ol class="summary-list">${items.map((item) => `<li><strong>${escapeHtml(item.type || "URL")}:</strong> ${item.url ? linkedUrl(item.url) : escapeHtml(item.label || "—")} ${item.url && item.label && item.label !== item.url ? `<span class="muted">${escapeHtml(item.label)}</span>` : ""}<br><span class="muted">Clicks Δ: ${formatSigned(item.clickDelta)} · Impressions: ${formatNumber(item.currentImpressions)} · CTR: ${formatPct(item.ctr)} · Avg position: ${formatPosition(item.avgPosition)} · ${escapeHtml(item.reason || "Review")}</span></li>`).join("")}</ol>`;
+}
+
+function renderMonthlyExecutiveSummary(summary = {}, filters = {}) {
+  if (!isMonthlyReport(filters)) {
+    return "";
+  }
+  const metrics = summary.metricSummary || {};
+  return `<section>
+    <h2>Monthly Executive Summary</h2>
+    ${metrics.warning ? `<p class="note-box">${escapeHtml(metrics.warning)}</p>` : ""}
+    <div class="kpis">
+      <div class="kpi"><span>Current month</span><strong>${escapeHtml(summary.currentMonthLabel || "—")}</strong></div>
+      <div class="kpi"><span>Previous month</span><strong>${metrics.hasPreviousData ? escapeHtml(summary.previousMonthLabel || "—") : "Unavailable"}</strong></div>
+      ${monthlyMetricKpi("Organic clicks", metrics.clicks, { formatter: formatNumber })}
+      ${monthlyMetricKpi("Impressions", metrics.impressions, { formatter: formatNumber })}
+      ${monthlyMetricKpi("CTR", metrics.ctr, { formatter: formatPct, deltaFormatter: formatPoint, showPercent: false, deltaKey: "pointDelta" })}
+      ${monthlyMetricKpi("Avg position", metrics.position, { formatter: formatPosition, deltaFormatter: (value) => formatSigned(value, 2), showPercent: false, deltaKey: "positionChange" })}
+    </div>
+    <div class="two-col" style="margin-top:14px;">
+      <div><h3>Top 3 wins</h3>${metrics.hasPreviousData ? summarySignalList(summary.topWins) : '<p class="empty">Previous month unavailable; wins require comparison data.</p>'}</div>
+      <div><h3>Top 3 losses</h3>${metrics.hasPreviousData ? summarySignalList(summary.topLosses) : '<p class="empty">Previous month unavailable; losses require comparison data.</p>'}</div>
+    </div>
+    <div style="margin-top:14px;"><h3>Top 3 opportunities</h3>${summarySignalList(summary.topOpportunities)}</div>
+    <p class="note-box"><strong>Recommended focus for next month:</strong> ${escapeHtml(summary.recommendedFocus || "Prioritize the highest-impact opportunities above.")}</p>
+  </section>`;
+}
+
+function monthlyUrlTable(rows = []) {
+  return rowsToTable(rows, {
+    header: "<tr><th>#</th><th>URL</th><th>Current clicks</th><th>Previous clicks</th><th>Click delta</th><th>Click delta %</th><th>Current impressions</th><th>CTR</th><th>Avg position</th><th>Reason tag</th></tr>",
+    row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatNumber(item.currentClicks)}</td><td>${formatNumber(item.previousClicks)}</td><td class="${deltaClass(item.clickDelta)}">${formatSigned(item.clickDelta)}</td><td>${escapeHtml(formatDeltaPercent(item.clickPct, "N/A"))}</td><td>${formatNumber(item.currentImpressions)}</td><td>${formatPct(item.currentCtr)}</td><td>${formatPosition(item.currentPosition)}</td><td>${reasonTags(item.reasonTags || item.reasonTag)}</td></tr>`,
+  });
+}
+
+function monthlyCtrOpportunityTable(rows = []) {
+  return rowsToTable(rows, {
+    header: "<tr><th>#</th><th>URL</th><th>Current clicks</th><th>Current impressions</th><th>CTR</th><th>Avg position</th><th>Reason</th></tr>",
+    row: (item, idx) => `<tr><td>${idx + 1}</td><td class="url">${linkedUrl(item.url)}</td><td>${formatNumber(item.clicks)}</td><td>${formatNumber(item.impressions)}</td><td>${formatPct(item.ctr)}</td><td>${formatPosition(item.position)}</td><td>${escapeHtml(item.recommendation || "High impressions with low CTR")}</td></tr>`,
+  });
+}
+
+function renderMonthlyUrlWinnersLosers(monthly = {}, filters = {}) {
+  if (!isMonthlyReport(filters)) {
+    return "";
+  }
+
+  return renderTabbedTables({
+    id: "monthly-url-winners-losers",
+    title: "Month-over-Month URL Winners & Losers",
+    description: monthly.note || `Compare Previous → Current: ${rangeLabel(monthly.previousRange)} → ${rangeLabel(monthly.currentRange)}. Winner/loser tables require at least 10 combined clicks or 500 combined impressions.`,
+    tabs: [
+      { id: "url-winners", label: "URL Winners", html: monthly.hasPreviousData ? monthlyUrlTable(monthly.urlWinners) : '<p class="empty">Previous month unavailable; URL winner deltas are hidden.</p>' },
+      { id: "url-losers", label: "URL Losers", html: monthly.hasPreviousData ? monthlyUrlTable(monthly.urlLosers) : '<p class="empty">Previous month unavailable; URL loser deltas are hidden.</p>' },
+      { id: "ctr-opportunities", label: "CTR Opportunities", html: monthlyCtrOpportunityTable(monthly.ctrOpportunities) },
+      { id: "new-rising-urls", label: "New/Rising URLs", html: monthly.hasPreviousData ? monthlyUrlTable(monthly.newRisingUrls) : '<p class="empty">Previous month unavailable; new/rising classification is hidden.</p>' },
+    ],
+  });
+}
 
 function isMarkdownTableDivider(line) {
   return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
@@ -465,6 +556,8 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, k
   const contribution = insights.last30Contribution;
   const snapshot = insights.contentOpportunitySnapshot;
   const movement = insights.urlMovement30Days;
+  const monthlySummary = insights.monthlyExecutiveSummary || {};
+  const monthlyUrlWinnersLosers = insights.monthlyUrlWinnersLosers || {};
   const sixMonths = insights.url6MonthInsights || {};
   const aiInsights = keywordInsights.aiInsights || { available: false, message: "AI insight not requested." };
   const filters = sourceInfo.filters || {};
@@ -492,17 +585,19 @@ export function renderHtmlReport({ insights, sourceInfo, keywordInsights = {}, k
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{--bg-1:#f5f2e8;--bg-2:#e8efe3;--ink:#102027;--muted:#4f6272;--accent:#156064;--accent-soft:#b8d8d8;--warm:#ff7b54;--up:#1f7a1f;--down:#b33636;--flat:#6a7280;--card:rgba(255,255,255,.8);--line:rgba(0,0,0,.08)}
-*{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden}body{margin:0;font-family:"IBM Plex Sans",sans-serif;color:var(--ink);background:radial-gradient(circle at 8% 12%,rgba(255,123,84,.28),transparent 28%),radial-gradient(circle at 86% 4%,rgba(21,96,100,.2),transparent 32%),linear-gradient(140deg,var(--bg-1),var(--bg-2))}.wrapper{width:min(1220px,95vw);margin:0 auto;padding:28px 0 60px}header{background:linear-gradient(120deg,rgba(16,32,39,.95),rgba(21,96,100,.86));color:#fff;border-radius:20px;padding:28px;margin-bottom:18px;overflow:hidden;box-shadow:0 18px 40px rgba(12,22,26,.25)}h1,h2,h3{font-family:"Space Grotesk",sans-serif;letter-spacing:-.01em;margin:0}h1{font-size:clamp(1.4rem,3vw,2rem)}h2{font-size:clamp(1.1rem,2.4vw,1.4rem);margin-bottom:10px}h3{font-size:1rem;margin-bottom:8px}.meta{margin-top:8px;color:rgba(255,255,255,.9);font-size:.95rem;display:flex;flex-wrap:wrap;gap:14px}section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-top:16px;backdrop-filter:blur(8px);max-width:100%;overflow:hidden}.two-col{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px}.kpi{background:rgba(255,255,255,.8);border:1px solid var(--line);border-radius:12px;padding:10px}.kpi span{display:block;font-size:.8rem;color:var(--muted)}.kpi strong{font-size:1rem}.kpi small{display:block;margin-top:4px}.up{color:var(--up);font-weight:700}.down{color:var(--down);font-weight:700}.flat{color:var(--flat);font-weight:700}.chart-box{height:320px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}.table-scroll{overflow-x:auto;max-width:100%;border-radius:12px}.table-scroll table{min-width:880px}table{width:100%;border-collapse:collapse;background:rgba(255,255,255,.74);border-radius:12px;overflow:hidden}th,td{text-align:left;border-bottom:1px solid var(--line);padding:8px;vertical-align:top}th{background:rgba(16,32,39,.94);color:#fff;font-weight:600}td.url{width:34%;max-width:340px;word-break:break-word;overflow-wrap:anywhere;font-size:.84rem;line-height:1.35}td.url a{color:var(--accent);font-weight:600;text-decoration:none}.muted,.empty{color:var(--muted);font-size:.88rem}.note-box{border-left:4px solid var(--accent);padding:10px 12px;background:rgba(184,216,216,.28);border-radius:10px;color:var(--muted)}.note-box.danger{border-color:rgba(179,54,54,.45);background:rgba(179,54,54,.09)}.report-actions{margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap}.action-link,.download-link{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:10px 14px;color:#fff;background:var(--accent);font-weight:700;text-decoration:none;box-shadow:0 10px 24px rgba(21,96,100,.22);border:1px solid rgba(21,96,100,.1)}.action-link.secondary{background:#fff;color:var(--accent);border-color:rgba(21,96,100,.28);box-shadow:none}.action-link.disabled{background:rgba(106,114,128,.15);color:var(--flat);box-shadow:none;cursor:not-allowed}.empty-table{border:1px dashed rgba(79,98,114,.35);border-radius:12px;background:rgba(255,255,255,.72);padding:16px;color:var(--muted)}.empty-table strong{display:block;color:var(--ink);margin-bottom:4px}.priority{display:inline-block;border-radius:999px;padding:2px 8px;font-size:.75rem;font-weight:700;text-transform:uppercase;background:rgba(106,114,128,.16)}.priority-high{background:rgba(179,54,54,.16);color:var(--down)}.priority-medium{background:rgba(255,123,84,.2);color:#8a3f1d}.priority-low{background:rgba(31,122,31,.14);color:var(--up)}.report-tabs{display:flex;gap:8px;margin:14px 0 12px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}.report-tab-button{appearance:none;border:1px solid rgba(21,96,100,.28);border-radius:999px;background:#fff;color:var(--accent);cursor:pointer;flex:0 0 auto;font:700 .88rem "IBM Plex Sans",sans-serif;padding:9px 14px;transition:background .18s ease,color .18s ease,box-shadow .18s ease}.report-tab-button.active{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 8px 18px rgba(21,96,100,.22)}.report-tab-button:focus-visible{outline:3px solid rgba(255,123,84,.45);outline-offset:2px}.report-tab-panel{max-width:100%}.report-tab-panel[hidden]{display:none!important}@media(max-width:700px){.wrapper{width:94vw;padding-top:16px}header,section{padding:14px}.two-col{grid-template-columns:1fr}.kpis{grid-template-columns:1fr}.report-tabs{margin-left:-2px;margin-right:-2px;padding:0 2px 6px}.report-tab-button{padding:8px 12px;font-size:.84rem}th,td{font-size:.83rem;padding:7px}.table-scroll table{min-width:760px}td.url{max-width:240px;font-size:.84rem}.chart-box{height:260px}}
+*{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden}body{margin:0;font-family:"IBM Plex Sans",sans-serif;color:var(--ink);background:radial-gradient(circle at 8% 12%,rgba(255,123,84,.28),transparent 28%),radial-gradient(circle at 86% 4%,rgba(21,96,100,.2),transparent 32%),linear-gradient(140deg,var(--bg-1),var(--bg-2))}.wrapper{width:min(1220px,95vw);margin:0 auto;padding:28px 0 60px}header{background:linear-gradient(120deg,rgba(16,32,39,.95),rgba(21,96,100,.86));color:#fff;border-radius:20px;padding:28px;margin-bottom:18px;overflow:hidden;box-shadow:0 18px 40px rgba(12,22,26,.25)}h1,h2,h3{font-family:"Space Grotesk",sans-serif;letter-spacing:-.01em;margin:0}h1{font-size:clamp(1.4rem,3vw,2rem)}h2{font-size:clamp(1.1rem,2.4vw,1.4rem);margin-bottom:10px}h3{font-size:1rem;margin-bottom:8px}.meta{margin-top:8px;color:rgba(255,255,255,.9);font-size:.95rem;display:flex;flex-wrap:wrap;gap:14px}section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-top:16px;backdrop-filter:blur(8px);max-width:100%;overflow:hidden}.two-col{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px}.kpi{background:rgba(255,255,255,.8);border:1px solid var(--line);border-radius:12px;padding:10px}.kpi span{display:block;font-size:.8rem;color:var(--muted)}.kpi strong{font-size:1rem}.kpi small{display:block;margin-top:4px}.up{color:var(--up);font-weight:700}.down{color:var(--down);font-weight:700}.flat{color:var(--flat);font-weight:700}.chart-box{height:320px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}.table-scroll{overflow-x:auto;max-width:100%;border-radius:12px}.table-scroll table{min-width:880px}table{width:100%;border-collapse:collapse;background:rgba(255,255,255,.74);border-radius:12px;overflow:hidden}th,td{text-align:left;border-bottom:1px solid var(--line);padding:8px;vertical-align:top}th{background:rgba(16,32,39,.94);color:#fff;font-weight:600}td.url{width:34%;max-width:340px;word-break:break-word;overflow-wrap:anywhere;font-size:.84rem;line-height:1.35}td.url a{color:var(--accent);font-weight:600;text-decoration:none}.muted,.empty{color:var(--muted);font-size:.88rem}.note-box{border-left:4px solid var(--accent);padding:10px 12px;background:rgba(184,216,216,.28);border-radius:10px;color:var(--muted)}.note-box.danger{border-color:rgba(179,54,54,.45);background:rgba(179,54,54,.09)}.report-actions{margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap}.action-link,.download-link{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:10px 14px;color:#fff;background:var(--accent);font-weight:700;text-decoration:none;box-shadow:0 10px 24px rgba(21,96,100,.22);border:1px solid rgba(21,96,100,.1)}.action-link.secondary{background:#fff;color:var(--accent);border-color:rgba(21,96,100,.28);box-shadow:none}.action-link.disabled{background:rgba(106,114,128,.15);color:var(--flat);box-shadow:none;cursor:not-allowed}.empty-table{border:1px dashed rgba(79,98,114,.35);border-radius:12px;background:rgba(255,255,255,.72);padding:16px;color:var(--muted)}.empty-table strong{display:block;color:var(--ink);margin-bottom:4px}.priority{display:inline-block;border-radius:999px;padding:2px 8px;font-size:.75rem;font-weight:700;text-transform:uppercase;background:rgba(106,114,128,.16)}.priority-high{background:rgba(179,54,54,.16);color:var(--down)}.priority-medium{background:rgba(255,123,84,.2);color:#8a3f1d}.priority-low{background:rgba(31,122,31,.14);color:var(--up)}.reason-tag{display:inline-block;border-radius:999px;background:rgba(21,96,100,.1);color:var(--accent);font-size:.74rem;font-weight:700;margin:1px 2px 1px 0;padding:2px 7px}.summary-list{margin:0;padding-left:20px}.summary-list li{margin-bottom:8px}.report-tabs{display:flex;gap:8px;margin:14px 0 12px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}.report-tab-button{appearance:none;border:1px solid rgba(21,96,100,.28);border-radius:999px;background:#fff;color:var(--accent);cursor:pointer;flex:0 0 auto;font:700 .88rem "IBM Plex Sans",sans-serif;padding:9px 14px;transition:background .18s ease,color .18s ease,box-shadow .18s ease}.report-tab-button.active{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 8px 18px rgba(21,96,100,.22)}.report-tab-button:focus-visible{outline:3px solid rgba(255,123,84,.45);outline-offset:2px}.report-tab-panel{max-width:100%}.report-tab-panel[hidden]{display:none!important}@media(max-width:700px){.wrapper{width:94vw;padding-top:16px}header,section{padding:14px}.two-col{grid-template-columns:1fr}.kpis{grid-template-columns:1fr}.report-tabs{margin-left:-2px;margin-right:-2px;padding:0 2px 6px}.report-tab-button{padding:8px 12px;font-size:.84rem}th,td{font-size:.83rem;padding:7px}.table-scroll table{min-width:760px}td.url{max-width:240px;font-size:.84rem}.chart-box{height:260px}}
 </style></head><body><div class="wrapper">
   <div class="report-actions" aria-label="Report actions">${saveReportForm}<a class="action-link secondary" href="/">Back to dashboard</a><a class="action-link" href="/reports/new">Create another preview</a>${reportDownloadUrl ? `<a class="action-link secondary" href="/reports">Saved in report history</a><a class="download-link" href="${escapeHtml(reportDownloadUrl)}">Download HTML + CSS + Script</a>` : ""}${keywordCsvDownloadUrl ? `<a class="download-link" href="${escapeHtml(keywordCsvDownloadUrl)}">Download keyword CSV</a>` : ""}</div>
   <header><h1>${escapeHtml(reportLabel)}</h1><div class="meta"><span>Report type: ${escapeHtml(reportTypeLabel)}</span><span>Report label: ${escapeHtml(reportLabel)}</span><span>Current period: ${escapeHtml(rangeLabel(sourceInfo.range))}</span><span>Previous comparable period: ${escapeHtml(rangeLabel(previousComparableRange))}</span><span>Property: ${escapeHtml(sourceInfo.property)}</span><span>Search type: ${escapeHtml(filters.searchType || "web")}</span><span>Page filter: ${escapeHtml(filters.pageContains || "None")}</span><span>Generated: ${escapeHtml(insights.generatedAt)}</span><span>Source: ${escapeHtml(sourceInfo.label)}</span><span>Data span: ${escapeHtml(dataSpanLabel(insights, diagnostics))}</span></div></header>
   <section><h2>Active Filters</h2>${dataDelayNote ? `<p class="note-box" style="margin-bottom:10px;">${escapeHtml(dataDelayNote)}</p>` : ""}<div class="kpis"><div class="kpi"><span>Report type</span><strong>${escapeHtml(reportTypeLabel)}</strong></div><div class="kpi"><span>Report label</span><strong>${escapeHtml(reportLabel)}</strong></div><div class="kpi"><span>Property</span><strong>${escapeHtml(sourceInfo.property || "—")}</strong></div><div class="kpi"><span>Search type</span><strong>${escapeHtml(filters.searchType || "web")}</strong></div><div class="kpi"><span>Current period</span><strong>${escapeHtml(rangeLabel(sourceInfo.range))}</strong></div><div class="kpi"><span>Previous comparable period</span><strong>${escapeHtml(rangeLabel(previousComparableRange))}</strong></div><div class="kpi"><span>Fetched analysis range</span><strong>${escapeHtml(rangeLabel(diagnostics.queryRange))}</strong></div><div class="kpi"><span>Report period</span><strong>${escapeHtml(filters.reportPeriodLabel || filters.reportPeriod || "custom")}</strong></div><div class="kpi"><span>Page contains filter</span><strong>${escapeHtml(filters.pageContains || "None")}</strong></div><div class="kpi"><span>Tracked keyword count</span><strong>${formatNumber(filters.trackedKeywordCount || 0)}</strong></div></div></section>
   ${renderEmptyReportSection({ sourceInfo, filters, diagnostics })}
   ${renderAiInsights(aiInsights)}
+  ${renderMonthlyExecutiveSummary(monthlySummary, filters)}
   ${renderOverview(overview)}
   ${renderPerformance3Months(perf)}
   ${renderLast30Contribution(contribution)}
   ${renderContentSnapshot(snapshot)}
+  ${renderMonthlyUrlWinnersLosers(monthlyUrlWinnersLosers, filters)}
   ${renderUrlMovement(movement)}
   ${renderKeywordSections(keywordInsights, keywordCsvDownloadUrl)}
   ${render6MonthSignals(sixMonths)}
