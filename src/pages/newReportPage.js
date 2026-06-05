@@ -146,13 +146,22 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
           <input id="enableAiInsights" type="checkbox" name="enableAiInsights" value="1" ${checked(defaultValues.enableAiInsights)} />
           <div>
             <label for="enableAiInsights">Enable OpenRouter AI insight</label>
-            ${renderFieldHelper("OpenRouter insights run only when enabled and OPENROUTER_API_KEY is configured; no API key value is shown in the UI.")}
+            ${renderFieldHelper("OpenRouter insights run only when enabled and OPENROUTER_API_KEY is configured; no API key value is shown in the UI. AI chỉ phân tích dữ liệu đã tóm tắt, không dùng raw GSC rows.")}
           </div>
         </div>
 
         ${renderHelpBox({ title: "Average position note", body: "For average position, lower is better. A movement from 12 to 8 is an improvement even though the numeric value decreased." })}
+        <p class="helper">Báo cáo lớn có thể mất một chút thời gian.</p>
         <div class="actions" style="margin-top:18px;"><button id="createReportButton" class="btn" type="submit" ${sourceType === "gsc" && !sites.length ? "disabled" : ""}>Generate Preview</button><a class="btn btn-secondary" href="/reports">Saved Reports</a><a class="btn btn-secondary" href="/">Cancel</a></div>
       </form>
+      <div class="loading-overlay" id="reportLoadingOverlay" role="status" aria-live="polite" aria-hidden="true">
+        <div class="loading-card">
+          <div class="tea-scene" aria-hidden="true"><span class="steam"></span><span class="steam"></span><span class="steam"></span><span>☕</span><span>🍰</span></div>
+          <h2>Đang phân tích dữ liệu SEO<span class="loading-dots"><span></span><span></span><span></span></span></h2>
+          <p class="loading-message" id="reportLoadingMessage">Ăn miếng bánh, uống miếng trà, chờ chút xíu...</p>
+          <p class="loading-subcopy">Bạn cứ để tab này mở, báo cáo sẽ hiện ra ngay khi hoàn tất.</p>
+        </div>
+      </div>
       <script>
         const sourceType = document.getElementById("sourceType");
         const reportType = document.getElementById("reportType");
@@ -163,6 +172,11 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
         const monthlyHelper = document.querySelector(".monthly-report-helper");
         const quarterlyHelper = document.querySelector(".quarterly-report-helper");
         const createReportButton = document.getElementById("createReportButton");
+        const reportForm = createReportButton ? createReportButton.closest("form") : null;
+        const loadingOverlay = document.getElementById("reportLoadingOverlay");
+        const loadingMessage = document.getElementById("reportLoadingMessage");
+        const loadingMessages = ["Đang lấy dữ liệu GSC...", "Ăn miếng bánh, uống miếng trà, chờ chút xíu...", "Đang gom các URL nổi bật...", "Đang kiểm tra từ khóa có cơ hội tăng trưởng...", "Đang nhờ AI đọc báo cáo giúp bạn...", "Sắp xong rồi, chuẩn bị xem insight nhé..."];
+        let reportSubmitting = false;
         const hasGscProperties = ${sites.length > 0 ? "true" : "false"};
         function syncSource() {
           const looker = sourceType.value === "looker";
@@ -189,6 +203,31 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
         sourceType.addEventListener("change", () => { syncSource(); syncDates(); });
         reportType.addEventListener("change", syncDates);
         reportPeriod.addEventListener("change", syncDates);
+        if (reportForm) {
+          reportForm.addEventListener("submit", (event) => {
+            if (reportSubmitting) {
+              event.preventDefault();
+              return;
+            }
+            reportSubmitting = true;
+            if (createReportButton) {
+              createReportButton.disabled = true;
+              createReportButton.textContent = "Generating preview...";
+            }
+            if (loadingOverlay) {
+              loadingOverlay.classList.add("is-visible");
+              loadingOverlay.setAttribute("aria-hidden", "false");
+            }
+            if (loadingMessage) {
+              let messageIndex = 1;
+              loadingMessage.textContent = loadingMessages[messageIndex];
+              window.setInterval(() => {
+                messageIndex = (messageIndex + 1) % loadingMessages.length;
+                loadingMessage.textContent = loadingMessages[messageIndex];
+              }, 2600);
+            }
+          });
+        }
         syncSource(); syncDates();
       </script>`}
   `;
