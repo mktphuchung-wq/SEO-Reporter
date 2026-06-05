@@ -2,7 +2,12 @@ import { renderLayout } from "../ui/layout.js";
 import { escapeHtml } from "../ui/html.js";
 import { renderAlert, renderEmptyState, renderHelpBox } from "../ui/components.js";
 import { checked, renderFieldHelper, selected } from "../ui/forms.js";
-import { getMostRecentCompletedMonth, getPreviousMonthRange } from "../lib/reportPeriods.js";
+import {
+  getMostRecentCompletedMonth,
+  getMostRecentCompletedQuarter,
+  getPreviousMonthRange,
+  getPreviousQuarterRange,
+} from "../lib/reportPeriods.js";
 
 function option(value, label, current) {
   return `<option value="${escapeHtml(value)}" ${selected(value, current)}>${escapeHtml(label)}</option>`;
@@ -15,6 +20,8 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
   const reportPeriod = defaultValues.reportPeriod || "30d";
   const monthlyRange = getMostRecentCompletedMonth(new Date(), Number.parseInt(process.env.GSC_DATA_DELAY_DAYS || "2", 10));
   const previousMonthlyRange = getPreviousMonthRange(monthlyRange);
+  const quarterlyRange = getMostRecentCompletedQuarter(new Date(), Number.parseInt(process.env.GSC_DATA_DELAY_DAYS || "2", 10));
+  const previousQuarterlyRange = getPreviousQuarterRange(quarterlyRange);
   const searchType = defaultValues.searchType || "web";
   const noPropertiesWarning = authenticated && !googleApiError && sites.length === 0 ? "No Search Console properties found for this Google account." : "";
   const gscOptions = sites
@@ -76,7 +83,7 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
               ${option("quarterly", "Quarterly SEO Report", reportType)}
               ${option("custom", "Custom Report", reportType)}
             </select>
-            ${renderFieldHelper("Monthly reports use the most recently completed GSC month. Quarterly reports are coming soon.")}
+            ${renderFieldHelper("Monthly and quarterly reports use the most recently completed full period. Custom reports let you choose dates manually.")}
           </div>
           <div class="field">
             <label for="searchType">Search type</label>
@@ -93,9 +100,9 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
           <strong>Monthly report uses the most recently completed GSC month.</strong>
           <p>Current period: ${escapeHtml(monthlyRange.label)} (${escapeHtml(monthlyRange.start)} → ${escapeHtml(monthlyRange.end)}). Previous comparable period: ${escapeHtml(previousMonthlyRange.label)} (${escapeHtml(previousMonthlyRange.start)} → ${escapeHtml(previousMonthlyRange.end)}).</p>
         </div>
-        <div class="quarterly-report-helper help-box">
-          <strong>Quarterly SEO Report is coming soon.</strong>
-          <p>Please choose Monthly SEO Report or Custom Report for now.</p>
+        <div class="quarterly-report-helper help-box" data-current-quarter="${escapeHtml(quarterlyRange.label)}" data-previous-quarter="${escapeHtml(previousQuarterlyRange.label)}">
+          <strong>Quarterly report uses the most recently completed full quarter.</strong>
+          <p>Current quarter: ${escapeHtml(quarterlyRange.label)} (${escapeHtml(quarterlyRange.start)} → ${escapeHtml(quarterlyRange.end)}). Previous comparable quarter: ${escapeHtml(previousQuarterlyRange.label)} (${escapeHtml(previousQuarterlyRange.start)} → ${escapeHtml(previousQuarterlyRange.end)}).</p>
         </div>
 
         <div class="grid grid-2 custom-report-controls">
@@ -177,7 +184,7 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
           if (quarterlyHelper) quarterlyHelper.classList.toggle("field-hidden", !quarterly);
           const customDatesEnabled = customReport && reportPeriod.value === "custom";
           customDateFields.forEach((input) => { input.disabled = !customDatesEnabled; });
-          if (createReportButton) createReportButton.disabled = quarterly || (sourceType.value !== "looker" && !hasGscProperties);
+          if (createReportButton) createReportButton.disabled = sourceType.value !== "looker" && !hasGscProperties;
         }
         sourceType.addEventListener("change", () => { syncSource(); syncDates(); });
         reportType.addEventListener("change", syncDates);
