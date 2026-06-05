@@ -127,14 +127,61 @@ export async function listRecentReportJobs({ userEmail, limit } = {}) {
 
   const result = await query(
     `select id, user_email, user_name, property_url, search_type, report_period, start_date, end_date,
-            status, progress, error_message, created_at, updated_at, started_at, completed_at
+            page_contains, status, progress, error_message, report_json, source_info, filters, ai_insights,
+            created_at, updated_at, started_at, completed_at
      from public.report_jobs
-     where user_email = $1
-     order by created_at desc
+     where user_email = $1 and status = 'completed'
+     order by completed_at desc nulls last, created_at desc
      limit $2`,
     [userEmail, normalizeLimit(limit)],
   );
   return result.rows;
+}
+
+export async function saveReportJob({ userEmail, userName, reportPayload, reportHtml = null } = {}) {
+  const sourceInfo = reportPayload?.sourceInfo || {};
+  const filters = reportPayload?.filters || sourceInfo.filters || {};
+  const range = sourceInfo.range || reportPayload?.selectedPeriodOverview?.currentRange || {};
+  const result = await query(
+    `insert into public.report_jobs (
+      user_email,
+      user_name,
+      property_url,
+      search_type,
+      report_period,
+      start_date,
+      end_date,
+      page_contains,
+      tracked_keywords,
+      status,
+      progress,
+      report_html,
+      report_json,
+      source_info,
+      filters,
+      ai_insights,
+      started_at,
+      completed_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'completed', 100, $10, $11, $12, $13, $14, now(), now())
+    returning *`,
+    [
+      userEmail || null,
+      userName || null,
+      sourceInfo.property || sourceInfo.propertyUrl || null,
+      filters.searchType || 'web',
+      filters.reportPeriod || 'custom',
+      range.start || null,
+      range.end || null,
+      String(filters.pageContains || '').trim() || null,
+      [],
+      reportHtml || null,
+      reportPayload || null,
+      sourceInfo || null,
+      filters || null,
+      reportPayload?.aiInsights || reportPayload?.keywordOpportunities?.aiInsights || null,
+    ],
+  );
+  return normalizeJob(result.rows[0]);
 }
 
 export function isValidReportJobStatus(status) {

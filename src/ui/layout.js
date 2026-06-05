@@ -3,8 +3,8 @@ import { escapeHtml } from "./html.js";
 export function renderNav({ activeNav = "dashboard" } = {}) {
   const links = [
     { id: "dashboard", href: "/", label: "Dashboard" },
-    { id: "new-report", href: "/reports/new", label: "New Report" },
-    { id: "reports", href: "/reports", label: "Reports" },
+    { id: "new-report", href: "/reports/new", label: "Generate Preview" },
+    { id: "reports", href: "/reports", label: "Saved Reports" },
     { id: "settings", href: "/settings", label: "Settings" },
   ];
   return `<nav class="app-nav" aria-label="Primary navigation">${links

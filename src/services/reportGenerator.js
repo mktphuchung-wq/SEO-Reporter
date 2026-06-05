@@ -19,6 +19,86 @@ import { renderHtmlReport } from "../renderHtmlReport.js";
 const OUTPUT_DIR = path.resolve("output");
 const MAX_TRACKED_KEYWORDS = Number.parseInt(process.env.MAX_TRACKED_KEYWORDS || "100", 10);
 
+const COMPACT_SECTION_ROW_LIMIT = 15;
+
+function limitRows(rows, limit = COMPACT_SECTION_ROW_LIMIT) {
+  return Array.isArray(rows) ? rows.slice(0, limit) : [];
+}
+
+function compactPerformance3MonthComparison(perf = {}) {
+  return {
+    note: perf.note || "",
+    currentRange: perf.currentRange || null,
+    previousRange: perf.previousRange || null,
+    current: perf.current || {},
+    previous: perf.previous || {},
+    delta: perf.delta || {},
+    growthCounts: perf.growthCounts || {},
+    outstandingUrls: {
+      topByClicks: limitRows(perf.outstandingUrls?.topByClicks),
+      topByImpressions: limitRows(perf.outstandingUrls?.topByImpressions),
+      fastestGrowing: limitRows(perf.outstandingUrls?.fastestGrowing),
+      fastestDeclining: limitRows(perf.outstandingUrls?.fastestDeclining),
+    },
+  };
+}
+
+export function buildCompactReportJson({ insights = {}, sourceInfo = {}, filters = {}, keywordInsights = {}, aiInsights = {} } = {}) {
+  return {
+    sourceInfo: {
+      label: sourceInfo.label || "",
+      property: sourceInfo.property || "",
+      range: sourceInfo.range || null,
+      filters,
+      diagnostics: {
+        queryRange: sourceInfo.diagnostics?.queryRange || null,
+        pageRowCount: sourceInfo.diagnostics?.pageRowCount || 0,
+        coalescedPageRowCount: sourceInfo.diagnostics?.coalescedPageRowCount || 0,
+        keywordRowCount: sourceInfo.diagnostics?.keywordRowCount || 0,
+        gscDataDelayDays: sourceInfo.diagnostics?.gscDataDelayDays ?? null,
+        pageContainsApplied: sourceInfo.diagnostics?.pageContainsApplied ?? Boolean(filters.pageContains),
+      },
+      dataDelayNote: sourceInfo.dataDelayNote || "",
+      emptyReason: sourceInfo.emptyReason || "",
+    },
+    filters,
+    selectedPeriodOverview: insights.selectedPeriodOverview || {},
+    performance3MonthComparison: compactPerformance3MonthComparison(insights.performance3MonthComparison || {}),
+    last30Contribution: insights.last30Contribution || {},
+    contentOpportunitySnapshot: {
+      note: insights.contentOpportunitySnapshot?.note || "",
+      topGrowingUrls: limitRows(insights.contentOpportunitySnapshot?.topGrowingUrls),
+      topDecliningUrls: limitRows(insights.contentOpportunitySnapshot?.topDecliningUrls),
+      highImpressionLowCtr: limitRows(insights.contentOpportunitySnapshot?.highImpressionLowCtr),
+      newRisingUrls: limitRows(insights.contentOpportunitySnapshot?.newRisingUrls),
+    },
+    urlMovement30Days: {
+      ...(insights.urlMovement30Days || {}),
+      trendingUp: limitRows(insights.urlMovement30Days?.trendingUp),
+      trendingDown: limitRows(insights.urlMovement30Days?.trendingDown),
+      smallDeclines: limitRows(insights.urlMovement30Days?.smallDeclines),
+    },
+    keywordOpportunities: {
+      trackedKeywords: limitRows(keywordInsights.trackedKeywords),
+      trackedKeywordMovements: limitRows(keywordInsights.trackedKeywordMovements),
+      highImpressionDrops: limitRows(keywordInsights.highImpressionDrops),
+      nearPageOneKeywords: limitRows(keywordInsights.nearPageOneKeywords),
+      keywordWinners: limitRows(keywordInsights.keywordWinners),
+      ctrOpportunities: limitRows(keywordInsights.ctrOpportunities),
+      currentRange: keywordInsights.currentRange || null,
+      previousRange: keywordInsights.previousRange || null,
+      aiInsights,
+    },
+    aiInsights,
+    generatedAt: insights.generatedAt || new Date().toISOString(),
+  };
+}
+
+function encodeReportPayload(reportJson) {
+  return Buffer.from(JSON.stringify(reportJson), "utf8").toString("base64");
+}
+
+
 export const REPORT_PERIOD_LABELS = {
   "7d": "1 week",
   "30d": "1 month",
@@ -206,11 +286,13 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
   };
 
   const keywordCsv = buildKeywordInsightsCsv(keywordInsights);
+  const reportJson = buildCompactReportJson({ insights, sourceInfo: enrichedSourceInfo, filters, keywordInsights, aiInsights });
   const reportHtml = renderHtmlReport({
     insights,
     sourceInfo: enrichedSourceInfo,
     keywordInsights,
     reportDownloadUrl,
+    saveReportPayload: encodeReportPayload(reportJson),
   });
   onProgress(80);
 
@@ -222,7 +304,6 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
     // Ignore write errors on serverless environments with ephemeral filesystem.
   }
 
-  const reportJson = { insights, keywordInsights };
   onProgress(100);
 
   return {

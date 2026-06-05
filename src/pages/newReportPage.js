@@ -23,8 +23,8 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
     <section class="hero">
       <div>
         <p class="muted">Report builder</p>
-        <h1>Create New Report</h1>
-        <p>Choose a Google Search Console property, set filters, and create an internal SEO report. Save and download actions appear after the report finishes generating.</p>
+        <h1>Generate Report Preview</h1>
+        <p>Choose a Google Search Console property and filters, then generate a preview. Nothing is saved until you click Save Report on the generated report page.</p>
       </div>
       <div class="actions"><a class="btn btn-secondary" href="/">Back to dashboard</a></div>
     </section>
@@ -34,7 +34,7 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
       body: "Connect Google before loading Search Console properties and generating GSC reports.",
       actionHtml: '<a class="btn" href="/auth/google">Authenticate Google first</a>',
     }) : `
-      <form class="card" method="post" action="/reports">
+      <form class="card" method="post" action="/generate">
         <div class="grid grid-2">
           <div class="field">
             <label for="sourceType">Source type</label>
@@ -42,7 +42,7 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
               ${option("gsc", "GSC API", sourceType)}
               ${option("looker", "Looker CSV fallback", sourceType)}
             </select>
-            ${renderFieldHelper("Use the GSC API for authenticated reporting. Generated reports are saved to report history and can be downloaded after completion.")}
+            ${renderFieldHelper("Use the GSC API for authenticated reporting. Generated previews are not saved automatically. Use Save Report on the preview page to add one to history.")}
           </div>
           <div class="field">
             <label for="siteUrl">GSC property</label>
@@ -119,7 +119,7 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
         </div>
 
         ${renderHelpBox({ title: "Average position note", body: "For average position, lower is better. A movement from 12 to 8 is an improvement even though the numeric value decreased." })}
-        <div class="actions" style="margin-top:18px;"><button id="createReportButton" class="btn" type="submit" ${sourceType === "gsc" && !sites.length ? "disabled" : ""}>Create Report</button><a class="btn btn-secondary" href="/reports">Report history</a><a class="btn btn-secondary" href="/">Cancel</a></div>
+        <div class="actions" style="margin-top:18px;"><button id="createReportButton" class="btn" type="submit" ${sourceType === "gsc" && !sites.length ? "disabled" : ""}>Generate Preview</button><a class="btn btn-secondary" href="/reports">Saved Reports</a><a class="btn btn-secondary" href="/">Cancel</a></div>
       </form>
       <script>
         const sourceType = document.getElementById("sourceType");
