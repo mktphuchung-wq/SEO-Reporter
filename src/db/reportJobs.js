@@ -169,7 +169,7 @@ export async function saveReportJob({ userEmail, userName, reportPayload, report
       userName || null,
       sourceInfo.property || sourceInfo.propertyUrl || null,
       filters.searchType || 'web',
-      filters.reportPeriod || 'custom',
+      filters.reportType === 'monthly' ? 'monthly' : filters.reportPeriod || 'custom',
       range.start || null,
       range.end || null,
       String(filters.pageContains || '').trim() || null,
