@@ -90,10 +90,12 @@ Use Supabase Postgres as the durable store for async report job status and compl
 1. Open `sql/001_create_report_jobs.sql` in this repo.
 2. In the Supabase dashboard, open the SQL Editor for your project and paste/run the full contents of `sql/001_create_report_jobs.sql`. The app does not run this migration automatically.
 3. In Vercel, set `DATABASE_URL` to the Supabase Postgres connection string. For Vercel serverless deployments, use the Supabase Transaction Pooler connection string rather than a direct connection string.
-4. If you also use Supabase APIs later, set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in Vercel as server-side environment variables only. Do not expose these values to frontend code.
-5. Redeploy the Express/Vercel app after setting environment variables.
-6. Test database connectivity with `/health/db`; a configured database should return `{ "ok": true }`.
-7. Create reports from the homepage and use `/reports` to view recent report history for the signed-in Google user.
+4. Supabase pooler usernames must include the project ref (`postgres.<project-ref>`). If your pooler URL was pasted with `postgres` only, also set `SUPABASE_PROJECT_REF` (or `SUPABASE_URL=https://<project-ref>.supabase.co`) and the app will normalize the pooler username before connecting.
+5. If the database password contains special characters such as `#`, `?`, `/`, `@`, or `:`, percent-encode the password portion of `DATABASE_URL`; otherwise Postgres can receive the wrong password and return `password authentication failed for user "postgres"`.
+6. If you also use Supabase APIs later, set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in Vercel as server-side environment variables only. Do not expose these values to frontend code.
+7. Redeploy the Express/Vercel app after setting environment variables.
+8. Test database connectivity with `/health/db`; a configured database should return `{ "ok": true }`.
+9. Create reports from the homepage and use `/reports` to view recent report history for the signed-in Google user.
 
 If `DATABASE_URL` is missing, unrelated pages such as the homepage still load. Database-backed routes return a clear configuration error until the environment variable is set.
 
