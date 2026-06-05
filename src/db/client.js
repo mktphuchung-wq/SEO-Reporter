@@ -5,7 +5,7 @@ const { Pool } = pg;
 let pool;
 let poolConfigSignature;
 
-const CONNECTION_URL_ENV_NAMES = ["DATABASE_URL", "POSTGRES_URL", "POSTGRES_PRISMA_URL"];
+const CONNECTION_URL_ENV_NAMES = ["DATABASE_URL"];
 
 function stripMatchingQuotes(value) {
   let normalized = value.trim();

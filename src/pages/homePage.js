@@ -28,7 +28,7 @@ export function renderHomePage({ sites = [], authenticated = false, user = null,
         <p>Build Google Search Console reports, track URL and keyword movement, and prepare SEO insights for stakeholders.</p>
       </div>
       <div class="actions">
-        ${authenticated ? `<a class="btn" href="/reports/new">Create New Report</a>` : `<a class="btn" href="/auth/google">Authenticate Google</a>`}
+        ${authenticated ? `<a class="btn" href="/reports/new">Generate Preview</a>` : `<a class="btn" href="/auth/google">Authenticate Google</a>`}
         ${authenticated ? `<a class="btn btn-secondary" href="/auth/logout">Logout Google</a>` : ""}
       </div>
     </section>
@@ -50,17 +50,17 @@ export function renderHomePage({ sites = [], authenticated = false, user = null,
             <h2>Google Search Console</h2>
             <p class="muted">Status: ${renderStatusBadge(googleStatus)} ${selectedSiteUrl ? `Default property: <strong>${escapeHtml(selectedSiteUrl)}</strong>` : ""}</p>
           </div>
-          <div class="actions"><a class="btn" href="/reports/new">Create New Report</a><a class="btn btn-secondary" href="/settings">Review Settings</a></div>
+          <div class="actions"><a class="btn" href="/reports/new">Generate Preview</a><a class="btn btn-secondary" href="/settings">Review Settings</a></div>
         </div>
       </section>
 
       <section class="card" style="margin-top:14px;">
         <div class="split">
           <div>
-            <h2>Recent report jobs</h2>
-            <p class="muted">Saved report history is available after each generated job completes, including downloads for the full HTML file with embedded CSS and script.</p>
+            <h2>Saved Reports</h2>
+            <p class="muted">Saved report history includes only previews that were explicitly saved.</p>
           </div>
-          <a class="btn btn-secondary" href="/reports">Open report history</a>
+          <a class="btn btn-secondary" href="/reports">Open Saved Reports</a>
         </div>
         ${renderTable({
           columns: [

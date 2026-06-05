@@ -9,17 +9,14 @@ import { renderHomePage as renderDashboardHomePage } from "./pages/homePage.js";
 import { renderNewReportPage } from "./pages/newReportPage.js";
 import { renderSettingsPage } from "./pages/settingsPage.js";
 import { renderReportsPage } from "./pages/reportsPage.js";
+import { renderHtmlReport } from "./renderHtmlReport.js";
 import { escapeHtml } from "./ui/html.js";
 import { filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
 import { query as dbQuery } from "./db/client.js";
 import {
-  completeReportJob,
-  createReportJob,
-  failReportJob,
   getReportJob,
   listRecentReportJobs,
-  markReportJobRunning,
-  updateReportJobProgress,
+  saveReportJob,
 } from "./db/reportJobs.js";
 import { generateReportFromInput } from "./services/reportGenerator.js";
 
@@ -60,8 +57,8 @@ app.use(
   }),
 );
 
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+app.use(express.json({ limit: "1mb" }));
 
 function isProduction() {
   return process.env.NODE_ENV === "production";
@@ -870,6 +867,87 @@ function injectReportActionBar(reportHtml, job) {
   return `${actionBar}${reportHtml || ""}`;
 }
 
+
+const MAX_REPORT_PAYLOAD_BYTES = Number.parseInt(process.env.MAX_REPORT_PAYLOAD_BYTES || "250000", 10);
+
+function renderSafeSaveErrorPage(message = "Unable to save report.") {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Save report failed</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#edf3ea;color:#12232e;margin:0}.shell{width:min(760px,94vw);margin:40px auto}.card{background:#fff;border:1px solid #d7dfdc;border-radius:14px;padding:22px}.btn{display:inline-block;padding:10px 14px;border-radius:8px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:700}</style></head><body><main class="shell"><section class="card"><h1>Could not save report</h1><p>${escapeHtml(message)}</p><p>No database credentials or secrets were exposed. Please retry or contact an administrator if the issue continues.</p><p><a class="btn" href="/reports/new">Generate Preview</a></p></section></main></body></html>`;
+}
+
+function decodeReportPayload(encodedPayload = "") {
+  const payloadText = String(encodedPayload || "").trim();
+  if (!payloadText) {
+    throw new Error("Missing report payload.");
+  }
+  if (Buffer.byteLength(payloadText, "utf8") > MAX_REPORT_PAYLOAD_BYTES) {
+    throw new Error("Report payload is too large to save safely. Generate a smaller filtered preview and try again.");
+  }
+  let jsonText;
+  try {
+    jsonText = Buffer.from(payloadText, "base64").toString("utf8");
+  } catch {
+    throw new Error("Report payload could not be decoded.");
+  }
+  if (Buffer.byteLength(jsonText, "utf8") > MAX_REPORT_PAYLOAD_BYTES) {
+    throw new Error("Report payload is too large to save safely. Generate a smaller filtered preview and try again.");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    throw new Error("Report payload is not valid JSON.");
+  }
+  validateCompactReportPayload(parsed);
+  return parsed;
+}
+
+function validateCompactReportPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Report payload is invalid.");
+  }
+  if (!payload.sourceInfo || typeof payload.sourceInfo !== "object") {
+    throw new Error("Report payload is missing source information.");
+  }
+  if (!payload.selectedPeriodOverview || !payload.performance3MonthComparison) {
+    throw new Error("Report payload is missing report analytics.");
+  }
+}
+
+function normalizeSavedReportJsonForRender(reportJson = {}) {
+  if (reportJson.insights) {
+    return {
+      insights: reportJson.insights,
+      sourceInfo: reportJson.sourceInfo || reportJson.insights.sourceInfo || {},
+      keywordInsights: reportJson.keywordInsights || {},
+    };
+  }
+
+  return {
+    insights: {
+      generatedAt: reportJson.generatedAt || "",
+      selectedPeriodOverview: reportJson.selectedPeriodOverview || {},
+      performance3MonthComparison: reportJson.performance3MonthComparison || {},
+      last30Contribution: reportJson.last30Contribution || {},
+      contentOpportunitySnapshot: reportJson.contentOpportunitySnapshot || {},
+      urlMovement30Days: reportJson.urlMovement30Days || {},
+      url6MonthInsights: {},
+      dataAvailabilityNotes: [],
+    },
+    sourceInfo: {
+      ...(reportJson.sourceInfo || {}),
+      filters: reportJson.filters || reportJson.sourceInfo?.filters || {},
+    },
+    keywordInsights: reportJson.keywordOpportunities || { aiInsights: reportJson.aiInsights },
+  };
+}
+
+function renderSavedReportHtml(job) {
+  if (job.report_json) {
+    return renderHtmlReport(normalizeSavedReportJsonForRender(job.report_json));
+  }
+  return job.report_html || "";
+}
+
 function getReportStatusTone(status) {
   const normalized = String(status || "").toLowerCase();
   if (["completed"].includes(normalized)) return "green";
@@ -906,9 +984,9 @@ function renderReportStatusPage(job) {
       <p><strong>Updated:</strong> ${escapeHtml(formatJobTimestamp(updatedAt))}</p>
       ${job.status === "failed" ? `<div class="error">${escapeHtml(errorMessage || "Report generation failed.")}</div>` : ""}
       <div class="actions">
-        ${job.status === "completed" ? `<a class="btn" href="/reports/${encodeURIComponent(job.id)}/view">View saved report</a><a class="btn secondary" href="/reports">Saved in report history</a><a class="btn secondary" href="/reports/${encodeURIComponent(job.id)}/download">Download HTML + CSS + Script</a>` : ""}
+        ${job.status === "completed" ? `<a class="btn" href="/reports/${encodeURIComponent(job.id)}/view">View saved report</a><a class="btn secondary" href="/reports">Saved Reports</a><a class="btn secondary" href="/reports/${encodeURIComponent(job.id)}/download">Download HTML + CSS + Script</a>` : ""}
         ${isActive ? '<span>Refreshing every 3 seconds…</span>' : ""}
-        <a class="btn secondary" href="/reports">Report history</a>
+        <a class="btn secondary" href="/reports">Saved Reports</a>
         <a class="btn secondary" href="/">Back to builder</a>
       </div>
     </section>
@@ -921,82 +999,38 @@ function renderReportListPage(jobs) {
   const rows = jobs
     .map((job) => {
       const encodedId = encodeURIComponent(job.id);
-      const href = job.status === "completed" ? `/reports/${encodedId}/view` : `/reports/${encodedId}/status`;
-      const downloadLink = job.status === "completed" ? ` · <a href="/reports/${encodedId}/download">Download HTML</a>` : "";
-      return `<tr><td>${escapeHtml(formatJobTimestamp(job.created_at))}</td><td>${escapeHtml(job.property_url || "—")}</td><td>${escapeHtml(job.search_type || "web")}</td><td>${escapeHtml(job.start_date || "—")} → ${escapeHtml(job.end_date || "—")}</td><td>${escapeHtml(job.status)}</td><td>${escapeHtml(job.progress)}%</td><td><a href="${href}">${job.status === "completed" ? "View" : "Status"}</a>${downloadLink}</td></tr>`;
+      const filters = job.filters || job.report_json?.filters || {};
+      const ai = job.ai_insights || job.report_json?.aiInsights || job.report_json?.keywordOpportunities?.aiInsights || {};
+      const aiLabel = ai.available ? "Enabled / available" : (ai.message === "AI insight not requested." ? "Not enabled" : "Unavailable");
+      return `<tr><td>${escapeHtml(formatJobTimestamp(job.completed_at || job.created_at))}</td><td>${escapeHtml(job.property_url || job.source_info?.property || "—")}</td><td>${escapeHtml(job.start_date || job.source_info?.range?.start || "—")} → ${escapeHtml(job.end_date || job.source_info?.range?.end || "—")}</td><td>${escapeHtml(job.report_period || filters.reportPeriod || "custom")}</td><td>${escapeHtml(job.page_contains || filters.pageContains || "None")}</td><td>${escapeHtml(aiLabel)}</td><td><a href="/reports/${encodedId}/view">View</a></td></tr>`;
     })
     .join("");
 
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Reports</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#edf3ea;color:#12232e;margin:0}.shell{width:min(1100px,94vw);margin:40px auto}.card{background:#fff;border:1px solid #d7dfdc;border-radius:14px;padding:22px;overflow:auto}.btn{display:inline-block;padding:10px 14px;border-radius:8px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:700}table{border-collapse:collapse;width:100%;margin-top:16px}th,td{border-bottom:1px solid #d7dfdc;padding:10px;text-align:left}th{font-size:.85rem;text-transform:uppercase;color:#53615c}</style></head>
-<body><main class="shell"><section class="card"><h1>Saved reports</h1><p>Completed reports are stored in history and can be downloaded as a single HTML file that includes report CSS and JavaScript.</p><p><a class="btn" href="/reports/new">Create Report</a></p>${jobs.length ? `<table><thead><tr><th>Created</th><th>Property</th><th>Type</th><th>Date range</th><th>Status</th><th>Progress</th><th>Link</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No report jobs found for this signed-in user yet.</p>"}</section></main></body></html>`;
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Saved Reports</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#edf3ea;color:#12232e;margin:0}.shell{width:min(1100px,94vw);margin:40px auto}.card{background:#fff;border:1px solid #d7dfdc;border-radius:14px;padding:22px;overflow:auto}.btn{display:inline-block;padding:10px 14px;border-radius:8px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:700}table{border-collapse:collapse;width:100%;margin-top:16px}th,td{border-bottom:1px solid #d7dfdc;padding:10px;text-align:left}th{font-size:.85rem;text-transform:uppercase;color:#53615c}</style></head>
+<body><main class="shell"><section class="card"><h1>Saved Reports</h1><p>Only reports explicitly saved from a generated preview appear here.</p><p><a class="btn" href="/reports/new">Generate Preview</a></p>${jobs.length ? `<table><thead><tr><th>Saved</th><th>Property</th><th>Date range</th><th>Report period</th><th>Page filter</th><th>AI</th><th>View</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No saved reports found for this signed-in user yet.</p>"}</section></main></body></html>`;
 }
 
-function safeReportJobError(error, body) {
-  if (isEmptyDataError(error)) {
-    return buildEmptyDataWarning(error, body);
-  }
-  return safeErrorMessage(error, "Report generation failed.");
-}
+app.post("/reports", async (_req, res) => {
+  res.status(410).type("html").send(renderSafeSaveErrorPage("Async report jobs are disabled for preview-first persistence. Use Generate Preview, then click Save Report on the generated report page."));
+});
 
-function startReportJob(job, { body, authClient, sessionObject }) {
-  setImmediate(async () => {
-    try {
-      await markReportJobRunning(job.id);
-      const result = await generateReportFromBody({
-        body,
-        authClient,
-        sessionObject,
-        reportDownloadUrl: `/reports/${encodeURIComponent(job.id)}/download`,
-        onProgress: (progress) => updateReportJobProgress(job.id, progress).catch((error) => console.warn("Failed to update report progress.", error instanceof Error ? error.message : error)),
-      });
-      await completeReportJob(job.id, result);
-    } catch (error) {
-      await failReportJob(job.id, safeReportJobError(error, body)).catch((dbError) => {
-        console.error("Failed to mark report job failed.", dbError instanceof Error ? dbError.message : dbError);
-      });
-    }
-  });
-}
-
-app.post("/reports", async (req, res) => {
+app.post("/reports/save", async (req, res) => {
   try {
-    const authClient = getAuthorizedClient(req);
-    validateReportRequest(req.body, authClient);
+    const reportPayload = decodeReportPayload(req.body?.reportPayload);
     const user = req.session?.user || {};
-    const job = await createReportJob({
+    const job = await saveReportJob({
       userEmail: user.email || null,
       userName: user.name || null,
-      propertyUrl: req.body.siteUrl || null,
-      searchType: req.body.searchType || "web",
-      reportPeriod: req.body.reportPeriod || "30d",
-      startDate: req.body.startDate || null,
-      endDate: req.body.endDate || null,
-      pageContains: req.body.pageContains || null,
-      trackedKeywords: req.body.trackedKeywords || "",
-      filters: {
-        sourceType: req.body.sourceType || "gsc",
-        reportPeriod: req.body.reportPeriod || "30d",
-        pageContains: String(req.body.pageContains || "").trim(),
-        searchType: req.body.searchType || "web",
-      },
+      reportPayload,
+      reportHtml: null,
     });
-    startReportJob(job, { body: { ...req.body }, authClient, sessionObject: req.session });
-    res.redirect(`/reports/${encodeURIComponent(job.id)}/status`);
+    res.redirect(`/reports/${encodeURIComponent(job.id)}/view`);
   } catch (error) {
-    const sites = await loadSitesForSession(req).catch(() => []);
-    const emptyData = isEmptyDataError(error);
-    res.status(400).type("html").send(
-      renderNewReportPage({
-        sites,
-        authenticated: Boolean(getGoogleTokens(req)),
-        user: req.session.user,
-        defaultValues: req.body,
-        error: emptyData ? "" : safeErrorMessage(error, "Report generation failed."),
-        warning: emptyData ? buildEmptyDataWarning(error, req.body) : "",
-      }),
-    );
+    const isPayloadError = /payload|JSON|analytics|source information/i.test(String(error?.message || ""));
+    const message = isPayloadError ? safeErrorMessage(error, "Unable to save report.") : "Unable to save report to the database. Please retry or contact an administrator if the issue continues.";
+    res.status(isPayloadError ? 400 : 500).type("html").send(renderSafeSaveErrorPage(message));
   }
 });
 
@@ -1033,11 +1067,11 @@ app.get("/reports/:id/view", async (req, res) => {
       res.status(500).type("html").send(`<p>${escapeHtml(job.error_message || "Report generation failed.")}</p><p><a href="/reports/${encodeURIComponent(job.id)}/status">Back to status</a></p>`);
       return;
     }
-    if (job.status !== "completed" || !job.report_html) {
+    if (job.status !== "completed" || (!job.report_json && !job.report_html)) {
       res.redirect(`/reports/${encodeURIComponent(job.id)}/status`);
       return;
     }
-    res.type("html").send(injectReportActionBar(job.report_html, job));
+    res.type("html").send(injectReportActionBar(renderSavedReportHtml(job), job));
   } catch (error) {
     res.status(500).type("text").send(safeErrorMessage(error, "Unable to load report job."));
   }
@@ -1050,7 +1084,7 @@ app.get("/reports/:id/download", async (req, res) => {
       res.status(404).type("text").send("Report job not found.");
       return;
     }
-    if (job.status !== "completed" || !job.report_html) {
+    if (job.status !== "completed" || (!job.report_json && !job.report_html)) {
       res.status(409).type("text").send("Report is not ready for download yet.");
       return;
     }
@@ -1062,7 +1096,7 @@ app.get("/reports/:id/download", async (req, res) => {
         "Content-Disposition": `attachment; filename="${buildReportDownloadFilename(job)}"`,
         "Cache-Control": "private, max-age=0, must-revalidate",
       })
-      .send(job.report_html);
+      .send(renderSavedReportHtml(job));
   } catch (error) {
     res.status(500).type("text").send(safeErrorMessage(error, "Unable to download report job."));
   }
