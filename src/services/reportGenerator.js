@@ -144,6 +144,15 @@ function limitTrackedKeywords(keywords) {
   return keywords.slice(0, getMaxTrackedKeywords());
 }
 
+
+function resolveReportType(rawInput = {}, reportPeriod = "") {
+  const explicitReportType = String(rawInput.reportType || "").trim().toLowerCase();
+  if (explicitReportType) {
+    return explicitReportType;
+  }
+  return reportPeriod === "30d" ? "monthly" : "standard";
+}
+
 function countDaysInclusive(startDate, endDate) {
   const start = parseDate(startDate);
   const end = parseDate(endDate);
@@ -211,7 +220,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
 
   const reportType = ["monthly", "quarterly", "custom"].includes(rawInput.reportType) ? rawInput.reportType : "custom";
   const reportPeriod = rawInput.reportPeriod || "30d";
-  const normalizedReportType = rawInput.reportType || (reportPeriod === "30d" ? "monthly" : "standard");
+  const normalizedReportType = resolveReportType(rawInput, reportPeriod);
   const pageContains = String(rawInput.pageContains || "").trim();
   const trackedKeywordsInput = rawInput.trackedKeywords || "";
   const enableAiInsights = Boolean(rawInput.enableAiInsights);
@@ -298,7 +307,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
 
   const filters = {
     ...(sourceInfo.filters || {}),
-    reportType,
+    reportType: normalizedReportType,
     reportPeriod,
     reportPeriodLabel: reportType === "monthly" ? "Monthly SEO Report" : REPORT_PERIOD_LABELS[reportPeriod] || REPORT_PERIOD_LABELS.custom,
     pageContains,
