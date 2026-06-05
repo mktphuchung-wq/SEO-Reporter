@@ -298,7 +298,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
 
   const filters = {
     ...(sourceInfo.filters || {}),
-    reportType: normalizedReportType,
+    reportType,
     reportPeriod,
     reportPeriodLabel: reportType === "monthly" ? "Monthly SEO Report" : REPORT_PERIOD_LABELS[reportPeriod] || REPORT_PERIOD_LABELS.custom,
     pageContains,
