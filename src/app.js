@@ -972,34 +972,42 @@ function getReportStatusTone(status) {
 }
 
 function renderReportStatusPage(job) {
-  const isActive = ["queued", "running"].includes(job.status);
-  const statusTone = getReportStatusTone(job.status);
+  const normalizedStatus = String(job.status || "queued").toLowerCase();
+  const isActive = ["queued", "running"].includes(normalizedStatus);
+  const statusTone = getReportStatusTone(normalizedStatus);
   const createdAt = job.created_at || job.createdAt;
   const updatedAt = job.updated_at || job.updatedAt;
   const errorMessage = job.error_message || job.error;
+  const statusMessages = {
+    queued: "Báo cáo đang xếp hàng, pha trà một chút nhé...",
+    running: "Đang xử lý dữ liệu, bánh vẫn còn nóng...",
+    completed: "Báo cáo đã sẵn sàng!",
+    failed: "Có lỗi xảy ra, kiểm tra lại cấu hình hoặc thử chạy lại.",
+  };
+  const progress = Math.max(0, Math.min(100, Number.parseInt(job.progress || 0, 10)));
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Report status</title>
-  ${isActive ? '<meta http-equiv="refresh" content="3" />' : ""}
-  <style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#edf3ea;color:#12232e;margin:0}.shell{width:min(760px,94vw);margin:40px auto}.card{background:#fff;border:1px solid #d7dfdc;border-radius:14px;padding:22px}.badge{display:inline-block;border-radius:999px;padding:6px 10px;font-weight:700}.badge.green{background:#dcfce7;color:#15803d}.badge.orange{background:#ffedd5;color:#c2410c}.badge.blue{background:#dbeafe;color:#1d4ed8}.badge.red{background:#fee2e2;color:#b91c1c}.badge.gray{background:#e2e8f0;color:#475569}.bar{height:14px;background:#d7dfdc;border-radius:999px;overflow:hidden;margin:16px 0}.bar span{display:block;height:100%;background:#2c6e49}.error{white-space:pre-wrap;background:#fee2e2;border:1px solid #fca5a5;color:#7f1d1d;border-radius:8px;padding:10px}.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-block;padding:10px 14px;border-radius:8px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:700}.btn.secondary{background:#fff;color:#2c6e49;border:1px solid #2c6e49}</style>
+  ${isActive ? '<meta http-equiv="refresh" content="8" />' : ""}
+  <style>*{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden}body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at 10% 0%,rgba(44,110,73,.16),transparent 28%),#edf3ea;color:#12232e;margin:0}.shell{width:min(760px,94vw);margin:40px auto}.card{background:rgba(255,255,255,.94);border:1px solid #d7dfdc;border-radius:20px;padding:24px;box-shadow:0 20px 50px rgba(18,35,46,.1)}.badge{display:inline-block;border-radius:999px;padding:6px 10px;font-weight:800;text-transform:capitalize}.badge.green{background:#dcfce7;color:#15803d}.badge.orange{background:#ffedd5;color:#c2410c}.badge.blue{background:#dbeafe;color:#1d4ed8}.badge.red{background:#fee2e2;color:#b91c1c}.badge.gray{background:#e2e8f0;color:#475569}.bar{height:14px;background:#d7dfdc;border-radius:999px;overflow:hidden;margin:16px 0}.bar span{display:block;height:100%;background:#2c6e49;transition:width .22s ease}.tea-loader{text-align:center;background:#f8fafc;border:1px solid #d7dfdc;border-radius:16px;padding:18px;margin:16px 0}.tea-scene{position:relative;display:inline-flex;align-items:end;gap:10px;font-size:3rem}.steam{position:absolute;top:-18px;width:7px;height:24px;border-radius:999px;background:linear-gradient(rgba(44,110,73,.45),rgba(44,110,73,0));animation:steam-rise 1.6s ease-in-out infinite}.steam.one{left:24px}.steam.two{left:43px;animation-delay:.25s}.steam.three{left:62px;animation-delay:.5s}.status-message{font-weight:800;color:#2c6e49}.dots span{display:inline-block;width:6px;height:6px;margin-left:4px;border-radius:999px;background:#2c6e49;animation:dot-bounce 1s ease-in-out infinite}.dots span:nth-child(2){animation-delay:.15s}.dots span:nth-child(3){animation-delay:.3s}.error{white-space:pre-wrap;background:#fee2e2;border:1px solid #fca5a5;color:#7f1d1d;border-radius:8px;padding:10px}.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-flex;padding:10px 14px;border-radius:999px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:800;transition:transform .18s ease,background .18s ease}.btn:hover{transform:translateY(-1px);background:#23593b}.btn:active{transform:translateY(0)}.btn:focus-visible{outline:3px solid rgba(249,115,22,.35);outline-offset:2px}.btn.secondary{background:#fff;color:#2c6e49;border:1px solid #2c6e49}@keyframes steam-rise{0%,100%{opacity:.28;transform:translateY(7px) scale(.9)}50%{opacity:.8;transform:translateY(-4px) scale(1.05)}}@keyframes dot-bounce{0%,80%,100%{transform:translateY(0);opacity:.45}40%{transform:translateY(-5px);opacity:1}}@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}@media(max-width:620px){.shell{margin:18px auto}.card{padding:18px}.actions .btn{width:100%;justify-content:center}}</style>
 </head>
 <body>
   <main class="shell">
     <section class="card">
       <h1>Report status</h1>
       <p>Job <code>${escapeHtml(job.id)}</code></p>
-      <p><span class="badge ${escapeHtml(statusTone)}">${escapeHtml(job.status)}</span></p>
-      <div class="bar" aria-label="Progress"><span style="width:${escapeHtml(job.progress)}%"></span></div>
-      <p><strong>Progress:</strong> ${escapeHtml(job.progress)}%</p>
+      <p><span class="badge ${escapeHtml(statusTone)}">${escapeHtml(normalizedStatus)}</span></p>
+      ${isActive ? `<div class="tea-loader" role="status" aria-live="polite"><div class="tea-scene" aria-hidden="true"><span class="steam one"></span><span class="steam two"></span><span class="steam three"></span><span>☕</span><span>🍰</span></div><p class="status-message">${escapeHtml(statusMessages[normalizedStatus])}<span class="dots"><span></span><span></span><span></span></span></p><p>Trang này tự làm mới nhẹ nhàng mỗi 8 giây.</p></div>` : `<p class="status-message">${escapeHtml(statusMessages[normalizedStatus] || normalizedStatus)}</p>`}
+      <div class="bar" aria-label="Progress"><span style="width:${escapeHtml(progress)}%"></span></div>
+      <p><strong>Progress:</strong> ${escapeHtml(progress)}%</p>
       <p><strong>Created:</strong> ${escapeHtml(formatJobTimestamp(createdAt))}</p>
       <p><strong>Updated:</strong> ${escapeHtml(formatJobTimestamp(updatedAt))}</p>
-      ${job.status === "failed" ? `<div class="error">${escapeHtml(errorMessage || "Report generation failed.")}</div>` : ""}
+      ${normalizedStatus === "failed" ? `<div class="error">${escapeHtml(errorMessage || "Report generation failed.")}</div>` : ""}
       <div class="actions">
-        ${job.status === "completed" ? `<a class="btn" href="/reports/${encodeURIComponent(job.id)}/view">View saved report</a><a class="btn secondary" href="/reports">Saved Reports</a><a class="btn secondary" href="/reports/${encodeURIComponent(job.id)}/download">Download HTML + CSS + Script</a>` : ""}
-        ${isActive ? '<span>Refreshing every 3 seconds…</span>' : ""}
+        ${normalizedStatus === "completed" ? `<a class="btn" href="/reports/${encodeURIComponent(job.id)}/view">View saved report</a><a class="btn secondary" href="/reports/${encodeURIComponent(job.id)}/download">Download HTML + CSS + Script</a>` : ""}
         <a class="btn secondary" href="/reports">Saved Reports</a>
         <a class="btn secondary" href="/">Back to builder</a>
       </div>
