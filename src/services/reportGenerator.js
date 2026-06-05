@@ -25,6 +25,19 @@ function limitRows(rows, limit = COMPACT_SECTION_ROW_LIMIT) {
   return Array.isArray(rows) ? rows.slice(0, limit) : [];
 }
 
+function compactMonthlyUrlMovements(monthly = {}) {
+  return {
+    note: monthly.note || "",
+    currentRange: monthly.currentRange || null,
+    previousRange: monthly.previousRange || null,
+    hasPreviousData: Boolean(monthly.hasPreviousData),
+    urlWinners: limitRows(monthly.urlWinners),
+    urlLosers: limitRows(monthly.urlLosers),
+    ctrOpportunities: limitRows(monthly.ctrOpportunities),
+    newRisingUrls: limitRows(monthly.newRisingUrls),
+  };
+}
+
 function compactPerformance3MonthComparison(perf = {}) {
   return {
     note: perf.note || "",
@@ -71,6 +84,8 @@ export function buildCompactReportJson({ insights = {}, sourceInfo = {}, filters
     selectedPeriodOverview: insights.selectedPeriodOverview || {},
     performance3MonthComparison: compactPerformance3MonthComparison(insights.performance3MonthComparison || {}),
     last30Contribution: insights.last30Contribution || {},
+    monthlyExecutiveSummary: insights.monthlyExecutiveSummary || {},
+    monthlyUrlWinnersLosers: compactMonthlyUrlMovements(insights.monthlyUrlWinnersLosers || {}),
     contentOpportunitySnapshot: {
       note: insights.contentOpportunitySnapshot?.note || "",
       topGrowingUrls: limitRows(insights.contentOpportunitySnapshot?.topGrowingUrls),
@@ -123,6 +138,15 @@ export function getMaxTrackedKeywords() {
 
 function limitTrackedKeywords(keywords) {
   return keywords.slice(0, getMaxTrackedKeywords());
+}
+
+
+function resolveReportType(rawInput = {}, reportPeriod = "") {
+  const explicitReportType = String(rawInput.reportType || "").trim().toLowerCase();
+  if (explicitReportType) {
+    return explicitReportType;
+  }
+  return reportPeriod === "30d" ? "monthly" : "standard";
 }
 
 function countDaysInclusive(startDate, endDate) {
@@ -191,6 +215,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
   onProgress(10);
 
   const reportPeriod = rawInput.reportPeriod || "30d";
+  const normalizedReportType = resolveReportType(rawInput, reportPeriod);
   const pageContains = String(rawInput.pageContains || "").trim();
   const trackedKeywordsInput = rawInput.trackedKeywords || "";
   const enableAiInsights = Boolean(rawInput.enableAiInsights);
@@ -249,7 +274,11 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
         performance3MonthComparison: insights.performance3MonthComparison,
         contentOpportunitySnapshot: insights.contentOpportunitySnapshot,
         urlMovement30Days: insights.urlMovement30Days,
-        filters: sourceInfo.filters || {
+        monthlyExecutiveSummary: insights.monthlyExecutiveSummary,
+        monthlyUrlWinnersLosers: insights.monthlyUrlWinnersLosers,
+        filters: {
+          ...(sourceInfo.filters || {}),
+          reportType: normalizedReportType,
           reportPeriod,
           pageContains,
           searchType: input.searchType || "web",
@@ -267,6 +296,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
 
   const filters = {
     ...(sourceInfo.filters || {}),
+    reportType: normalizedReportType,
     reportPeriod,
     reportPeriodLabel: REPORT_PERIOD_LABELS[reportPeriod] || REPORT_PERIOD_LABELS.custom,
     pageContains,
