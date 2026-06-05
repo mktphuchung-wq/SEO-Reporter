@@ -470,6 +470,12 @@ function safeJsonForHtml(value) {
   return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
+function reportPeriodLabelForFilters(filters = {}) {
+  if (filters.reportType === "monthly") return "monthly";
+  if (filters.reportType === "quarterly") return "quarterly";
+  return filters.reportPeriod || "custom";
+}
+
 function normalizePresetInput(input = {}) {
   return {
     siteUrl: String(input.siteUrl || "").trim(),
@@ -1010,7 +1016,7 @@ function renderReportListPage(jobs) {
       const filters = job.filters || job.report_json?.filters || {};
       const ai = job.ai_insights || job.report_json?.aiInsights || job.report_json?.keywordOpportunities?.aiInsights || {};
       const aiLabel = ai.available ? "Enabled / available" : (ai.message === "AI insight not requested." ? "Not enabled" : "Unavailable");
-      return `<tr><td>${escapeHtml(formatJobTimestamp(job.completed_at || job.created_at))}</td><td>${escapeHtml(job.property_url || job.source_info?.property || "—")}</td><td>${escapeHtml(job.start_date || job.source_info?.range?.start || "—")} → ${escapeHtml(job.end_date || job.source_info?.range?.end || "—")}</td><td>${escapeHtml(job.report_period || filters.reportPeriod || "custom")}</td><td>${escapeHtml(job.page_contains || filters.pageContains || "None")}</td><td>${escapeHtml(aiLabel)}</td><td><a href="/reports/${encodedId}/view">View</a></td></tr>`;
+      return `<tr><td>${escapeHtml(formatJobTimestamp(job.completed_at || job.created_at))}</td><td>${escapeHtml(job.property_url || job.source_info?.property || "—")}</td><td>${escapeHtml(job.start_date || job.source_info?.range?.start || "—")} → ${escapeHtml(job.end_date || job.source_info?.range?.end || "—")}</td><td>${escapeHtml(job.report_period || reportPeriodLabelForFilters(filters))}</td><td>${escapeHtml(job.page_contains || filters.pageContains || "None")}</td><td>${escapeHtml(aiLabel)}</td><td><a href="/reports/${encodedId}/view">View</a></td></tr>`;
     })
     .join("");
 

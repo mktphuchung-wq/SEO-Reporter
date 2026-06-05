@@ -3,7 +3,14 @@ import path from "node:path";
 import { fetchGscKeywordRows, fetchGscRows } from "./datasources/gscApi.js";
 import { loadContentMetadataRows, loadLookerCsvRows } from "./lib/csv.js";
 import dayjs, { clampDateRangeByDays, parseDate } from "./lib/time.js";
-import { formatMonthLabel, getMostRecentCompletedMonth, getPreviousMonthRange } from "./lib/reportPeriods.js";
+import {
+  formatMonthLabel,
+  formatQuarterLabel,
+  getMostRecentCompletedMonth,
+  getMostRecentCompletedQuarter,
+  getPreviousMonthRange,
+  getPreviousQuarterRange,
+} from "./lib/reportPeriods.js";
 
 function coalesceRows(rows) {
   const grouped = new Map();
@@ -111,6 +118,10 @@ export function resolveGscRange({ startDate, endDate, reportPeriod, reportType }
     return getMostRecentCompletedMonth(dayjs(), getGscDataDelayDays());
   }
 
+  if (reportType === "quarterly") {
+    return getMostRecentCompletedQuarter(dayjs(), getGscDataDelayDays());
+  }
+
   return resolveRange({
     startDate,
     endDate,
@@ -183,6 +194,13 @@ function previousRangeFor(range) {
   return clampDateRangeByDays(previousEnd, days);
 }
 
+function reportPeriodForType(reportType, reportPeriod) {
+  if (reportType === "monthly" || reportType === "quarterly") {
+    return reportType;
+  }
+  return reportPeriod || "custom";
+}
+
 export async function loadReportData({
   sourceType,
   siteUrl,
@@ -198,9 +216,6 @@ export async function loadReportData({
   reportType,
 }) {
   const normalizedReportType = ["monthly", "quarterly", "custom"].includes(reportType) ? reportType : "custom";
-  if (normalizedReportType === "quarterly") {
-    throw new Error("Quarterly SEO Report is coming soon. Please choose Monthly SEO Report or Custom Report.");
-  }
   const normalizedType = (sourceType || "looker").toLowerCase();
   const normalizedSearchType = (searchType || "web").toLowerCase();
   const trimmedPageContains = String(pageContains || "").trim();
@@ -215,7 +230,11 @@ export async function loadReportData({
 
     const range = resolveGscRange({ startDate, endDate, reportPeriod, reportType: normalizedReportType });
 
-    const comparisonRange = normalizedReportType === "monthly" ? getPreviousMonthRange(range) : previousRangeFor(range);
+    const comparisonRange = normalizedReportType === "monthly"
+      ? getPreviousMonthRange(range)
+      : normalizedReportType === "quarterly"
+        ? getPreviousQuarterRange(range)
+        : previousRangeFor(range);
     const fetchRange = {
       start: comparisonRange.start,
       end: range.end,
@@ -249,11 +268,15 @@ export async function loadReportData({
       previousRange: comparisonRange,
       keywordRange: keywordFetchRange,
       reportType: normalizedReportType,
-      reportLabel: normalizedReportType === "monthly" ? `Monthly SEO Report - ${formatMonthLabel(range)}` : "Custom Report",
+      reportLabel: normalizedReportType === "monthly"
+        ? `Monthly SEO Report - ${formatMonthLabel(range)}`
+        : normalizedReportType === "quarterly"
+          ? `Quarterly SEO Report - ${formatQuarterLabel(range)}`
+          : "Custom Report",
       dataDelayNote: buildGscDataDelayNote(range),
       filters: {
         reportType: normalizedReportType,
-        reportPeriod: reportPeriod || "custom",
+        reportPeriod: reportPeriodForType(normalizedReportType, reportPeriod),
         pageContains: trimmedPageContains,
         searchType: normalizedSearchType,
       },
@@ -279,9 +302,17 @@ export async function loadReportData({
     rows = await loadLookerRowsOrThrow(absoluteLookerPath);
     const span = findDateSpan(rows);
 
-    if (startDate || endDate || reportPeriod) {
-      const range = normalizedReportType === "monthly" ? getMostRecentCompletedMonth(dayjs(), getGscDataDelayDays()) : resolveRange({ startDate: startDate || span?.start, endDate: endDate || span?.end, reportPeriod });
-      const comparisonRange = normalizedReportType === "monthly" ? getPreviousMonthRange(range) : previousRangeFor(range);
+    if (startDate || endDate || reportPeriod || normalizedReportType !== "custom") {
+      const range = normalizedReportType === "monthly"
+        ? getMostRecentCompletedMonth(dayjs(), getGscDataDelayDays())
+        : normalizedReportType === "quarterly"
+          ? getMostRecentCompletedQuarter(dayjs(), getGscDataDelayDays())
+          : resolveRange({ startDate: startDate || span?.start, endDate: endDate || span?.end, reportPeriod });
+      const comparisonRange = normalizedReportType === "monthly"
+        ? getPreviousMonthRange(range)
+        : normalizedReportType === "quarterly"
+          ? getPreviousQuarterRange(range)
+          : previousRangeFor(range);
       const fetchRange = { start: comparisonRange.start, end: range.end };
       rows = rows.filter((row) => row.date >= fetchRange.start && row.date <= fetchRange.end);
       sourceInfo = {
@@ -290,10 +321,14 @@ export async function loadReportData({
         range,
         previousRange: comparisonRange,
         reportType: normalizedReportType,
-        reportLabel: normalizedReportType === "monthly" ? `Monthly SEO Report - ${formatMonthLabel(range)}` : "Custom Report",
+        reportLabel: normalizedReportType === "monthly"
+          ? `Monthly SEO Report - ${formatMonthLabel(range)}`
+          : normalizedReportType === "quarterly"
+            ? `Quarterly SEO Report - ${formatQuarterLabel(range)}`
+            : "Custom Report",
         filters: {
           reportType: normalizedReportType,
-          reportPeriod: reportPeriod || "custom",
+          reportPeriod: reportPeriodForType(normalizedReportType, reportPeriod),
           pageContains: trimmedPageContains,
           searchType: normalizedSearchType,
         },
@@ -311,10 +346,14 @@ export async function loadReportData({
         range: span,
         previousRange: span ? previousRangeFor(span) : null,
         reportType: normalizedReportType,
-        reportLabel: normalizedReportType === "monthly" && span ? `Monthly SEO Report - ${formatMonthLabel(span)}` : "Custom Report",
+        reportLabel: normalizedReportType === "monthly" && span
+          ? `Monthly SEO Report - ${formatMonthLabel(span)}`
+          : normalizedReportType === "quarterly" && span
+            ? `Quarterly SEO Report - ${formatQuarterLabel(span)}`
+            : "Custom Report",
         filters: {
           reportType: normalizedReportType,
-          reportPeriod: reportPeriod || "custom",
+          reportPeriod: reportPeriodForType(normalizedReportType, reportPeriod),
           pageContains: trimmedPageContains,
           searchType: normalizedSearchType,
         },
