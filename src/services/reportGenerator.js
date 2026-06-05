@@ -32,7 +32,10 @@ function compactPerformance3MonthComparison(perf = {}) {
     previousRange: perf.previousRange || null,
     current: perf.current || {},
     previous: perf.previous || {},
-    delta: perf.delta || {},
+    delta: perf.delta || null,
+    dailySeries: limitRows(perf.dailySeries, 120),
+    monthly: limitRows(perf.monthly, 12),
+    hasPreviousData: Boolean(perf.hasPreviousData),
     growthCounts: perf.growthCounts || {},
     outstandingUrls: {
       topByClicks: limitRows(perf.outstandingUrls?.topByClicks),
@@ -62,6 +65,9 @@ export function buildCompactReportJson({ insights = {}, sourceInfo = {}, filters
       emptyReason: sourceInfo.emptyReason || "",
     },
     filters,
+    dataSpan: insights.dataSpan || null,
+    dataSpanSource: insights.dataSpanSource || "none",
+    dataAvailabilityNotes: insights.dataAvailabilityNotes || [],
     selectedPeriodOverview: insights.selectedPeriodOverview || {},
     performance3MonthComparison: compactPerformance3MonthComparison(insights.performance3MonthComparison || {}),
     last30Contribution: insights.last30Contribution || {},
@@ -205,12 +211,13 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
 
   const { rows, keywordRows, sourceInfo } = await loadReportData(input);
   onProgress(30);
-  if (sourceType === "gsc" && rows.length === 0) {
+  if (sourceType === "gsc" && rows.length === 0 && keywordRows.length === 0) {
     throw createEmptyGscDataError({ sourceInfo, input });
   }
 
   const insights = buildSeoInsights({
     rows,
+    keywordRows,
     endDate: sourceInfo.range?.end,
     currentRange: sourceInfo.range,
   });

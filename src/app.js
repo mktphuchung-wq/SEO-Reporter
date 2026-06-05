@@ -925,13 +925,15 @@ function normalizeSavedReportJsonForRender(reportJson = {}) {
   return {
     insights: {
       generatedAt: reportJson.generatedAt || "",
+      dataSpan: reportJson.dataSpan || null,
+      dataSpanSource: reportJson.dataSpanSource || "none",
       selectedPeriodOverview: reportJson.selectedPeriodOverview || {},
       performance3MonthComparison: reportJson.performance3MonthComparison || {},
       last30Contribution: reportJson.last30Contribution || {},
       contentOpportunitySnapshot: reportJson.contentOpportunitySnapshot || {},
       urlMovement30Days: reportJson.urlMovement30Days || {},
       url6MonthInsights: {},
-      dataAvailabilityNotes: [],
+      dataAvailabilityNotes: reportJson.dataAvailabilityNotes || [],
     },
     sourceInfo: {
       ...(reportJson.sourceInfo || {}),
