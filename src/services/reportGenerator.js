@@ -65,9 +65,13 @@ export function buildCompactReportJson({ insights = {}, sourceInfo = {}, filters
       label: sourceInfo.label || "",
       property: sourceInfo.property || "",
       range: sourceInfo.range || null,
+      previousRange: sourceInfo.previousRange || null,
+      reportType: sourceInfo.reportType || filters.reportType || "custom",
+      reportLabel: sourceInfo.reportLabel || "Custom Report",
       filters,
       diagnostics: {
         queryRange: sourceInfo.diagnostics?.queryRange || null,
+        previousRange: sourceInfo.diagnostics?.previousRange || sourceInfo.previousRange || null,
         pageRowCount: sourceInfo.diagnostics?.pageRowCount || 0,
         coalescedPageRowCount: sourceInfo.diagnostics?.coalescedPageRowCount || 0,
         keywordRowCount: sourceInfo.diagnostics?.keywordRowCount || 0,
@@ -214,6 +218,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
   const sourceType = validateReportInput(rawInput, authClient);
   onProgress(10);
 
+  const reportType = ["monthly", "quarterly", "custom"].includes(rawInput.reportType) ? rawInput.reportType : "custom";
   const reportPeriod = rawInput.reportPeriod || "30d";
   const normalizedReportType = resolveReportType(rawInput, reportPeriod);
   const pageContains = String(rawInput.pageContains || "").trim();
@@ -226,6 +231,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
     lookerCsvPath: rawInput.lookerCsvPath,
     contentCsvPath: rawInput.contentCsvPath,
     searchType: rawInput.searchType,
+    reportType,
     reportPeriod,
     pageContains,
     startDate: rawInput.startDate,
@@ -245,12 +251,17 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
     keywordRows,
     endDate: sourceInfo.range?.end,
     currentRange: sourceInfo.range,
+    previousRange: sourceInfo.previousRange,
   });
 
   const periodDays = countDaysInclusive(sourceInfo.range?.start, sourceInfo.range?.end);
-  const { currentRange, previousRange } = buildComparableRanges(sourceInfo.range?.end, periodDays);
-  currentRange.start = sourceInfo.range?.start || currentRange.start;
-  currentRange.end = sourceInfo.range?.end || currentRange.end;
+  const comparableRanges = buildComparableRanges(sourceInfo.range?.end, periodDays);
+  const currentRange = {
+    ...comparableRanges.currentRange,
+    start: sourceInfo.range?.start || comparableRanges.currentRange.start,
+    end: sourceInfo.range?.end || comparableRanges.currentRange.end,
+  };
+  const previousRange = sourceInfo.previousRange || comparableRanges.previousRange;
   const trackedKeywords = limitTrackedKeywords(parseTrackedKeywords(trackedKeywordsInput));
   const trackedKeywordMovements = buildTrackedKeywordMovements({ keywordRows, trackedKeywords, currentRange, previousRange });
   const highImpressionDrops = buildHighImpressionKeywordMovements({ keywordRows, currentRange, previousRange });
@@ -298,7 +309,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
     ...(sourceInfo.filters || {}),
     reportType: normalizedReportType,
     reportPeriod,
-    reportPeriodLabel: REPORT_PERIOD_LABELS[reportPeriod] || REPORT_PERIOD_LABELS.custom,
+    reportPeriodLabel: reportType === "monthly" ? "Monthly SEO Report" : REPORT_PERIOD_LABELS[reportPeriod] || REPORT_PERIOD_LABELS.custom,
     pageContains,
     searchType: input.searchType || "web",
     trackedKeywordCount: trackedKeywords.length,
@@ -307,6 +318,9 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
 
   const enrichedSourceInfo = {
     ...sourceInfo,
+    reportType,
+    reportLabel: sourceInfo.reportLabel || (reportType === "monthly" ? `Monthly SEO Report - ${sourceInfo.range?.label || sourceInfo.range?.start || ""}`.trim() : "Custom Report"),
+    previousRange: sourceInfo.previousRange || previousRange,
     filters,
     diagnostics: {
       ...(sourceInfo.diagnostics || {}),
