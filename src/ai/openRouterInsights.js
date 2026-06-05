@@ -1,10 +1,10 @@
 const OPENROUTER_CHAT_COMPLETIONS_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_OPENROUTER_TIMEOUT_MS = 60000;
+const DEFAULT_OPENROUTER_TIMEOUT_MS = 30000;
 const DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
 const DEFAULT_OPENROUTER_MAX_OUTPUT_TOKENS = 3500;
-const MAX_TABLE_ROWS_FOR_AI = 15;
+const MAX_TABLE_ROWS_FOR_AI = 10;
 const SAFE_OPENROUTER_FAILURE_MESSAGE = "OpenRouter AI insight failed, but the SEO report was generated.";
-const SYSTEM_PROMPT = "You are an experienced SEO analyst. Analyze Google Search Console report summaries and produce practical SEO insights. Return Vietnamese output. Avoid generic advice. Ground every recommendation in the provided metrics. Focus on what changed, why it matters, and what the content/SEO team should do next.";
+const SYSTEM_PROMPT = "You are a senior SEO analyst. Your job is to analyze a completed Google Search Console report and write practical, evidence-based SEO insights in Vietnamese. Do not invent data. Only use the metrics, tables, URLs, and queries provided. Focus on what changed, why it matters, what needs attention, and what actions the SEO/content team should take next. Write in a concise but useful consulting style. Avoid generic SEO advice. Prioritize recommendations by expected impact.";
 
 function getPositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -20,7 +20,7 @@ function getOpenRouterMaxOutputTokens() {
 }
 
 function limitRows(rows, limit = MAX_TABLE_ROWS_FOR_AI) {
-  return (rows || []).slice(0, Math.min(limit, MAX_TABLE_ROWS_FOR_AI)).map((row) => ({ ...row }));
+  return Array.isArray(rows) ? rows.slice(0, Math.min(limit, MAX_TABLE_ROWS_FOR_AI)).map((row) => ({ ...row })) : [];
 }
 
 function compactUrlTable(table) {
@@ -72,8 +72,30 @@ function compactKeywordRows(rows) {
   }));
 }
 
-function fallbackUnavailable(diagnostics = {}) {
-  return { available: false, message: SAFE_OPENROUTER_FAILURE_MESSAGE, diagnostics };
+function safeDebugMessage(error, fallbackReason = "api_error") {
+  if (error?.name === "AbortError") {
+    return "OpenRouter request timed out.";
+  }
+
+  const message = String(error?.message || fallbackReason)
+    .replace(/Bearer\s+[A-Za-z0-9._~+\-/]+=*/gi, "Bearer [redacted]")
+    .replace(/OPENROUTER_API_KEY=\S+/gi, "OPENROUTER_API_KEY=[redacted]")
+    .replace(/DATABASE_URL=\S+/gi, "DATABASE_URL=[redacted]");
+
+  return message.slice(0, 300);
+}
+
+function fallbackUnavailable(errorOrDebug = {}) {
+  const debug = typeof errorOrDebug === "string"
+    ? errorOrDebug
+    : safeDebugMessage(errorOrDebug?.error, errorOrDebug?.reason || "unavailable");
+
+  return {
+    available: false,
+    markdown: "",
+    message: SAFE_OPENROUTER_FAILURE_MESSAGE,
+    debug,
+  };
 }
 
 function normalizeOpenRouterModelName(model) {
@@ -81,139 +103,22 @@ function normalizeOpenRouterModelName(model) {
 }
 
 async function readOpenRouterError(response) {
-  const contentType = response.headers?.get?.("content-type") || "";
   try {
+    const contentType = response.headers?.get?.("content-type") || "";
     if (contentType.includes("application/json")) {
       const data = await response.json();
-      return data?.error?.message || JSON.stringify(data?.error || data);
+      return String(data?.error?.message || data?.message || `HTTP ${response.status}`).slice(0, 300);
     }
-    return (await response.text()).slice(0, 500);
+    return (await response.text()).slice(0, 300);
   } catch (_error) {
     return "Unable to read OpenRouter API error response.";
   }
 }
 
-function extractFirstJsonObject(text) {
-  const source = String(text || "");
-  const fenced = source.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced ? fenced[1] : source;
-  const start = candidate.indexOf("{");
-  if (start === -1) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let index = start; index < candidate.length; index += 1) {
-    const char = candidate[index];
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-    } else if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return candidate.slice(start, index + 1);
-      }
-    }
-  }
-
-  return null;
-}
-
-function parseOpenRouterJson(content) {
-  const text = String(content || "").trim();
-  if (!text) return { parsed: null, rawText: "" };
-
-  try {
-    return { parsed: JSON.parse(text), rawText: text };
-  } catch (_directParseError) {
-    const extracted = extractFirstJsonObject(text);
-    if (extracted) {
-      try {
-        return { parsed: JSON.parse(extracted), rawText: text };
-      } catch (_extractedParseError) {
-        // Fall through to raw text fallback.
-      }
-    }
-  }
-
-  return { parsed: null, rawText: text };
-}
-
-function normalizeStringArray(value) {
-  return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
-}
-
-function normalizeImpact(value) {
-  return ["high", "medium", "low"].includes(value) ? value : "medium";
-}
-
-function normalizeWhatChanged(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => ({
-    finding: String(item?.finding || "").trim(),
-    evidence: String(item?.evidence || "").trim(),
-    impact: normalizeImpact(item?.impact),
-  })).filter((item) => item.finding || item.evidence);
-}
-
-function normalizeRisks(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => ({
-    risk: String(item?.risk || "").trim(),
-    evidence: String(item?.evidence || "").trim(),
-    recommendedAction: String(item?.recommendedAction || "").trim(),
-  })).filter((item) => item.risk || item.evidence || item.recommendedAction);
-}
-
-function normalizeOpportunities(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => ({
-    opportunity: String(item?.opportunity || "").trim(),
-    evidence: String(item?.evidence || "").trim(),
-    recommendedAction: String(item?.recommendedAction || "").trim(),
-  })).filter((item) => item.opportunity || item.evidence || item.recommendedAction);
-}
-
-function normalizeActions(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => ({
-    priority: normalizeImpact(item?.priority),
-    action: String(item?.action || "").trim(),
-    targetUrl: String(item?.targetUrl || "").trim(),
-    targetQuery: String(item?.targetQuery || "").trim(),
-    why: String(item?.why || "").trim(),
-    expectedImpact: String(item?.expectedImpact || "").trim(),
-    effort: ["low", "medium", "high"].includes(item?.effort) ? item.effort : "medium",
-  })).filter((item) => item.action || item.why);
-}
-
-function normalizeRefreshPlan(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => ({
-    url: String(item?.url || "").trim(),
-    reason: String(item?.reason || "").trim(),
-    updateSuggestion: String(item?.updateSuggestion || "").trim(),
-    supportingQueries: normalizeStringArray(item?.supportingQueries),
-  })).filter((item) => item.url || item.reason || item.updateSuggestion);
-}
-
 function buildCompactReportSummary(reportSummary = {}) {
   const {
     sourceInfo,
+    filters,
     selectedPeriodOverview,
     performance3MonthComparison,
     contentOpportunitySnapshot,
@@ -229,14 +134,14 @@ function buildCompactReportSummary(reportSummary = {}) {
       label: sourceInfo?.label,
       property: sourceInfo?.property,
       range: sourceInfo?.range,
-      filters: sourceInfo?.filters,
       diagnostics: {
         queryRange: sourceInfo?.diagnostics?.queryRange,
         coalescedPageRowCount: sourceInfo?.diagnostics?.coalescedPageRowCount,
         keywordRowCount: sourceInfo?.diagnostics?.keywordRowCount,
       },
     },
-    selectedPeriodOverview,
+    filters: filters || sourceInfo?.filters || {},
+    selectedPeriodOverview: selectedPeriodOverview || {},
     performance3MonthComparison: {
       currentRange: performance3MonthComparison?.currentRange,
       previousRange: performance3MonthComparison?.previousRange,
@@ -252,7 +157,7 @@ function buildCompactReportSummary(reportSummary = {}) {
         fastestDeclining: compactUrlTable(performance3MonthComparison?.outstandingUrls?.fastestDeclining),
       },
     },
-    last30Contribution: reportTablesForAI?.last30Contribution,
+    last30Contribution: reportTablesForAI?.last30Contribution || reportSummary.last30Contribution || {},
     contentOpportunitySnapshot: {
       note: contentOpportunitySnapshot?.note,
       topGrowingUrls: compactUrlTable(contentOpportunitySnapshot?.topGrowingUrls),
@@ -274,79 +179,63 @@ function buildCompactReportSummary(reportSummary = {}) {
       ctrOpportunities: compactKeywordRows(ctrOpportunities),
       nearPageOneKeywords: compactKeywordRows(nearPageOneKeywords),
     },
-    reportTablesForAI: {
-      topUrlsByClicks: compactUrlTable(reportTablesForAI?.topUrlsByClicks),
-      topUrlsByImpressions: compactUrlTable(reportTablesForAI?.topUrlsByImpressions),
-      fastestGrowingUrls: compactUrlTable(reportTablesForAI?.fastestGrowingUrls),
-      fastestDecliningUrls: compactUrlTable(reportTablesForAI?.fastestDecliningUrls),
-    },
   };
 }
 
 function buildUserPrompt(compactReportSummary) {
-  return `Analyze this SEO report summary. Return JSON only in this exact shape:
-{
-  "executiveSummary": [],
-  "whatChanged": [],
-  "risks": [],
-  "opportunities": [],
-  "recommendationActions": [],
-  "contentRefreshPlan": [],
-  "nextReportFocus": []
-}
+  return `Phân tích báo cáo Google Search Console dưới đây.
 
-Guidance for array items:
-- whatChanged: objects with finding, evidence, impact (high|medium|low)
-- risks: objects with risk, evidence, recommendedAction
-- opportunities: objects with opportunity, evidence, recommendedAction
-- recommendationActions: objects with priority (high|medium|low), action, targetUrl, targetQuery, why, expectedImpact, effort (low|medium|high)
-- contentRefreshPlan: objects with url, reason, updateSuggestion, supportingQueries
-- executiveSummary and nextReportFocus: concise Vietnamese strings
+Yêu cầu đầu ra bằng tiếng Việt, dạng Markdown, không cần JSON.
 
-Use only the compact summaries/top tables below. Do not infer from unavailable raw rows.
+Cấu trúc bắt buộc:
 
-Compact report summary:
-${JSON.stringify(compactReportSummary)}`;
+## Đánh giá tổng quan
+Tóm tắt tình hình SEO trong kỳ báo cáo.
+
+## Những thay đổi quan trọng
+Liệt kê các thay đổi đáng chú ý, có bằng chứng chỉ số.
+
+## Các URL cần chú ý
+Phân tích URL tăng trưởng tốt, URL nhiều impression CTR thấp, URL tụt traffic, URL gần trang 1.
+
+## Cơ hội tối ưu
+Nêu cơ hội cụ thể dựa trên dữ liệu.
+
+## Recommended Actions
+Tạo bảng Markdown:
+| Priority | Action | Target URL / Query | Why | Expected Impact | Effort |
+
+## Kế hoạch hành động 7 ngày tới
+Checklist hành động ngắn gọn.
+
+Dữ liệu báo cáo:
+${JSON.stringify(compactReportSummary, null, 2)}`;
 }
 
 function buildOpenRouterHeaders(apiKey) {
-  const headers = {
+  return {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
+    "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "",
+    "X-OpenRouter-Title": process.env.OPENROUTER_APP_TITLE || "SEO Reporter",
   };
-
-  if (process.env.OPENROUTER_SITE_URL) {
-    headers["HTTP-Referer"] = process.env.OPENROUTER_SITE_URL;
-  }
-
-  if (process.env.OPENROUTER_APP_TITLE) {
-    headers["X-OpenRouter-Title"] = process.env.OPENROUTER_APP_TITLE;
-  }
-
-  return headers;
 }
 
-async function callOpenRouter({ apiKey, model, messages, includeReasoning }) {
+async function callOpenRouter({ apiKey, model, messages }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), getOpenRouterTimeoutMs());
 
   try {
-    const body = {
-      model,
-      messages,
-      temperature: 0.3,
-      max_tokens: getOpenRouterMaxOutputTokens(),
-    };
-
-    if (includeReasoning) {
-      body.reasoning = { enabled: true, exclude: true };
-    }
-
     const response = await fetch(OPENROUTER_CHAT_COMPLETIONS_ENDPOINT, {
       method: "POST",
       headers: buildOpenRouterHeaders(apiKey),
       signal: controller.signal,
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: 0.2,
+        max_tokens: getOpenRouterMaxOutputTokens(),
+      }),
     });
 
     if (!response.ok) {
@@ -358,20 +247,6 @@ async function callOpenRouter({ apiKey, model, messages, includeReasoning }) {
   } finally {
     clearTimeout(timeout);
   }
-}
-
-function normalizeParsedInsights(parsed, rawText) {
-  return {
-    available: true,
-    executiveSummary: normalizeStringArray(parsed.executiveSummary),
-    whatChanged: normalizeWhatChanged(parsed.whatChanged),
-    risks: normalizeRisks(parsed.risks),
-    opportunities: normalizeOpportunities(parsed.opportunities),
-    recommendationActions: normalizeActions(parsed.recommendationActions),
-    contentRefreshPlan: normalizeRefreshPlan(parsed.contentRefreshPlan),
-    nextReportFocus: normalizeStringArray(parsed.nextReportFocus),
-    rawText,
-  };
 }
 
 export async function generateOpenRouterSeoInsights(reportSummary) {
@@ -391,40 +266,21 @@ export async function generateOpenRouterSeoInsights(reportSummary) {
     { role: "user", content: buildUserPrompt(compactReportSummary) },
   ];
 
-  let reasoningError;
-
   try {
-    const data = await callOpenRouter({ apiKey, model, messages, includeReasoning: true });
-    const content = data?.choices?.[0]?.message?.content || "";
-    const { parsed, rawText } = parseOpenRouterJson(content);
+    const data = await callOpenRouter({ apiKey, model, messages });
+    const markdown = String(data?.choices?.[0]?.message?.content || "").trim();
 
-    if (!parsed) {
-      return { available: true, rawText, parseError: "OpenRouter response was not valid JSON." };
+    if (!markdown) {
+      return fallbackUnavailable({ reason: "empty_response" });
     }
 
-    return normalizeParsedInsights(parsed, rawText);
-  } catch (error) {
-    reasoningError = error;
-  }
-
-  try {
-    const data = await callOpenRouter({ apiKey, model, messages, includeReasoning: false });
-    const content = data?.choices?.[0]?.message?.content || "";
-    const { parsed, rawText } = parseOpenRouterJson(content);
-
-    if (!parsed) {
-      return { available: true, rawText, parseError: "OpenRouter response was not valid JSON." };
-    }
-
-    return normalizeParsedInsights(parsed, rawText);
-  } catch (error) {
-    const finalError = error?.name === "AbortError" ? error : (error || reasoningError);
-    return fallbackUnavailable({
+    return {
+      available: true,
+      provider: "openrouter",
       model,
-      reason: finalError?.name === "AbortError" ? "timeout" : "api_error",
-      timeoutMs: getOpenRouterTimeoutMs(),
-      debugMessage: finalError?.message,
-      reasoningDebugMessage: reasoningError?.message,
-    });
+      markdown,
+    };
+  } catch (error) {
+    return fallbackUnavailable({ error, reason: error?.name === "AbortError" ? "timeout" : "api_error" });
   }
 }

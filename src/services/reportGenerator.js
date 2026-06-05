@@ -19,7 +19,7 @@ import { renderHtmlReport } from "../renderHtmlReport.js";
 const OUTPUT_DIR = path.resolve("output");
 const MAX_TRACKED_KEYWORDS = Number.parseInt(process.env.MAX_TRACKED_KEYWORDS || "100", 10);
 
-const COMPACT_SECTION_ROW_LIMIT = 15;
+const COMPACT_SECTION_ROW_LIMIT = 10;
 
 function limitRows(rows, limit = COMPACT_SECTION_ROW_LIMIT) {
   return Array.isArray(rows) ? rows.slice(0, limit) : [];
@@ -242,6 +242,11 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
         performance3MonthComparison: insights.performance3MonthComparison,
         contentOpportunitySnapshot: insights.contentOpportunitySnapshot,
         urlMovement30Days: insights.urlMovement30Days,
+        filters: sourceInfo.filters || {
+          reportPeriod,
+          pageContains,
+          searchType: input.searchType || "web",
+        },
         keywordMovements: {
           trackedKeywordMovements,
           highImpressionDrops,
