@@ -288,7 +288,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
         monthlyUrlWinnersLosers: insights.monthlyUrlWinnersLosers,
         filters: {
           ...(sourceInfo.filters || {}),
-          reportType: normalizedReportType,
+          reportType,
           reportPeriod,
           pageContains,
           searchType: input.searchType || "web",
