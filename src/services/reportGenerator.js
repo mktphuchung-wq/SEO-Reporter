@@ -211,7 +211,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
 
   const reportType = ["monthly", "quarterly", "custom"].includes(rawInput.reportType) ? rawInput.reportType : "custom";
   const reportPeriod = rawInput.reportPeriod || "30d";
-  const reportType = rawInput.reportType || (reportPeriod === "30d" ? "monthly" : "standard");
+  const normalizedReportType = rawInput.reportType || (reportPeriod === "30d" ? "monthly" : "standard");
   const pageContains = String(rawInput.pageContains || "").trim();
   const trackedKeywordsInput = rawInput.trackedKeywords || "";
   const enableAiInsights = Boolean(rawInput.enableAiInsights);
@@ -280,7 +280,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
         monthlyUrlWinnersLosers: insights.monthlyUrlWinnersLosers,
         filters: {
           ...(sourceInfo.filters || {}),
-          reportType,
+          reportType: normalizedReportType,
           reportPeriod,
           pageContains,
           searchType: input.searchType || "web",
@@ -298,7 +298,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
 
   const filters = {
     ...(sourceInfo.filters || {}),
-    reportType,
+    reportType: normalizedReportType,
     reportPeriod,
     reportPeriodLabel: reportType === "monthly" ? "Monthly SEO Report" : REPORT_PERIOD_LABELS[reportPeriod] || REPORT_PERIOD_LABELS.custom,
     pageContains,
