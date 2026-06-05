@@ -251,10 +251,21 @@ function renderUrlMovement(movement) {
   });
 }
 
+function renderAiUnavailable(aiInsights) {
+  const diagnostics = aiInsights?.diagnostics || {};
+  const debugDetails = process.env.NODE_ENV !== "production" && Object.keys(diagnostics).length
+    ? `<details class="note-box"><summary>OpenRouter debug (non-production)</summary><pre>${escapeHtml(JSON.stringify(diagnostics, null, 2))}</pre></details>`
+    : "";
+
+  return `<p class="empty">${escapeHtml(aiInsights?.message || "OpenRouter AI insight failed, but the SEO report was generated.")}</p>${debugDetails}`;
+}
+
 function renderAiInsights(aiInsights) {
   return `<section>
-    <h2>Executive Summary / OpenRouter AI SEO Insights</h2>
+    <h2>OpenRouter AI SEO Insights</h2>
     ${aiInsights.available ? `
+      ${aiInsights.parseError ? `<p class="note-box">${escapeHtml(aiInsights.parseError)}</p>` : ""}
+      ${aiInsights.rawText && aiInsights.parseError ? `<details class="note-box" open><summary>Raw OpenRouter response</summary><pre>${escapeHtml(aiInsights.rawText)}</pre></details>` : ""}
       <div class="two-col">
         <div><h3>Executive Summary</h3>${aiList(aiInsights.executiveSummary)}</div>
         <div><h3>What Changed</h3>${rowsToTable(aiInsights.whatChanged || [], {
@@ -281,7 +292,7 @@ function renderAiInsights(aiInsights) {
         row: (item) => `<tr><td class="url">${linkedUrl(item.url)}</td><td>${escapeHtml(item.reason)}</td><td>${escapeHtml(item.updateSuggestion)}</td><td>${escapeHtml((item.supportingQueries || []).join(", "))}</td></tr>`,
       })}
       <h3 style="margin-top:12px;">Next Report Focus</h3>${aiList(aiInsights.nextReportFocus)}
-    ` : `<p class="empty">${escapeHtml(aiInsights.message || "AI insight unavailable.")}</p>`}
+    ` : renderAiUnavailable(aiInsights)}
   </section>`;
 }
 
