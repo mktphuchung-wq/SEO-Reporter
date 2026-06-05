@@ -29,6 +29,13 @@ function normalizeJob(row) {
   return row || null;
 }
 
+function reportPeriodForReportType(reportType, reportPeriod) {
+  if (reportType === "monthly" || reportType === "quarterly") {
+    return reportType;
+  }
+  return reportPeriod || "custom";
+}
+
 export async function createReportJob(input = {}) {
   const result = await query(
     `insert into public.report_jobs (
@@ -51,7 +58,7 @@ export async function createReportJob(input = {}) {
       input.userName || null,
       input.propertyUrl || input.siteUrl || null,
       input.searchType || "web",
-      input.reportPeriod || "30d",
+      reportPeriodForReportType(input.reportType || input.filters?.reportType, input.reportPeriod || input.filters?.reportPeriod || "30d"),
       input.startDate || null,
       input.endDate || null,
       String(input.pageContains || "").trim() || null,
@@ -169,7 +176,7 @@ export async function saveReportJob({ userEmail, userName, reportPayload, report
       userName || null,
       sourceInfo.property || sourceInfo.propertyUrl || null,
       filters.searchType || 'web',
-      filters.reportType === 'monthly' ? 'monthly' : filters.reportPeriod || 'custom',
+      reportPeriodForReportType(filters.reportType, filters.reportPeriod),
       range.start || null,
       range.end || null,
       String(filters.pageContains || '').trim() || null,

@@ -152,6 +152,9 @@ function buildCompactReportSummary(reportSummary = {}) {
       label: sourceInfo?.label,
       property: sourceInfo?.property,
       range: sourceInfo?.range,
+      previousRange: sourceInfo?.previousRange,
+      reportType: sourceInfo?.reportType,
+      reportLabel: sourceInfo?.reportLabel,
       diagnostics: {
         queryRange: sourceInfo?.diagnostics?.queryRange,
         coalescedPageRowCount: sourceInfo?.diagnostics?.coalescedPageRowCount,
@@ -229,7 +232,9 @@ function buildCompactReportSummary(reportSummary = {}) {
 
 function buildUserPrompt(compactReportSummary) {
   const filters = compactReportSummary.filters || {};
-  const isMonthly = filters.reportType === "monthly" || filters.reportPeriod === "monthly" || filters.reportPeriod === "30d";
+  const explicitReportType = ["monthly", "quarterly", "custom"].includes(filters.reportType) ? filters.reportType : null;
+  const isMonthly = explicitReportType ? explicitReportType === "monthly" : filters.reportPeriod === "monthly" || filters.reportPeriod === "30d";
+  const isQuarterly = explicitReportType === "quarterly" || (!explicitReportType && filters.reportPeriod === "quarterly");
   const monthlyInstructions = isMonthly ? `
 
 Vì reportType = monthly, bắt buộc thêm các ý sau trong phân tích:
@@ -241,12 +246,25 @@ Vì reportType = monthly, bắt buộc thêm các ý sau trong phân tích:
 - Use only provided data.
 - Mention if previous month data is insufficient.
 ` : "";
+  const quarterlyInstructions = isQuarterly ? `
+
+Vì reportType = quarterly, bắt buộc thêm các ý sau trong phân tích:
+- Recommended focus for next quarter.
+- Quarter-level performance summary.
+- Quarter risks.
+- Quarter opportunities.
+- Whether growth is concentrated or broad-based.
+- Compare Previous → Current.
+- Use only provided data.
+- Mention if previous quarter data is insufficient.
+- Do not invent YoY comparisons unless provided.
+` : "";
   return `Phân tích báo cáo Google Search Console dưới đây.
 
 Yêu cầu đầu ra bằng tiếng Việt, dạng Markdown, không cần JSON.
 
 Chỉ sử dụng dữ liệu được cung cấp. Không tự tạo YoY, quý, hoặc so sánh khác nếu dữ liệu không có. Nếu hasPreviousData=false hoặc dataAvailabilityNote báo thiếu dữ liệu kỳ trước, hãy ghi rõ dữ liệu kỳ trước không đủ và chỉ nêu chỉ số hiện tại cho phần đó. Khi so sánh metric, luôn viết theo chiều Previous → Current; không bao giờ đảo thành Current → Previous.
-${monthlyInstructions}
+${monthlyInstructions}${quarterlyInstructions}
 
 Cấu trúc bắt buộc:
 

@@ -220,7 +220,6 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
 
   const reportType = ["monthly", "quarterly", "custom"].includes(rawInput.reportType) ? rawInput.reportType : "custom";
   const reportPeriod = rawInput.reportPeriod || "30d";
-  const normalizedReportType = resolveReportType(rawInput, reportPeriod);
   const pageContains = String(rawInput.pageContains || "").trim();
   const trackedKeywordsInput = rawInput.trackedKeywords || "";
   const enableAiInsights = Boolean(rawInput.enableAiInsights);
@@ -305,11 +304,17 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
       })
     : { available: false, message: "AI insight not requested." };
 
+  const effectiveReportPeriod = reportType === "monthly" ? "monthly" : reportType === "quarterly" ? "quarterly" : reportPeriod;
+
   const filters = {
     ...(sourceInfo.filters || {}),
-    reportType: normalizedReportType,
-    reportPeriod,
-    reportPeriodLabel: reportType === "monthly" ? "Monthly SEO Report" : REPORT_PERIOD_LABELS[reportPeriod] || REPORT_PERIOD_LABELS.custom,
+    reportType,
+    reportPeriod: effectiveReportPeriod,
+    reportPeriodLabel: reportType === "monthly"
+      ? "Monthly SEO Report"
+      : reportType === "quarterly"
+        ? "Quarterly SEO Report"
+        : REPORT_PERIOD_LABELS[reportPeriod] || REPORT_PERIOD_LABELS.custom,
     pageContains,
     searchType: input.searchType || "web",
     trackedKeywordCount: trackedKeywords.length,
@@ -319,7 +324,11 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
   const enrichedSourceInfo = {
     ...sourceInfo,
     reportType,
-    reportLabel: sourceInfo.reportLabel || (reportType === "monthly" ? `Monthly SEO Report - ${sourceInfo.range?.label || sourceInfo.range?.start || ""}`.trim() : "Custom Report"),
+    reportLabel: sourceInfo.reportLabel || (reportType === "monthly"
+      ? `Monthly SEO Report - ${sourceInfo.range?.label || sourceInfo.range?.start || ""}`.trim()
+      : reportType === "quarterly"
+        ? `Quarterly SEO Report - ${sourceInfo.range?.label || sourceInfo.range?.start || ""}`.trim()
+        : "Custom Report"),
     previousRange: sourceInfo.previousRange || previousRange,
     filters,
     diagnostics: {
