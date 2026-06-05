@@ -144,6 +144,15 @@ function limitTrackedKeywords(keywords) {
   return keywords.slice(0, getMaxTrackedKeywords());
 }
 
+
+function resolveReportType(rawInput = {}, reportPeriod = "") {
+  const explicitReportType = String(rawInput.reportType || "").trim().toLowerCase();
+  if (explicitReportType) {
+    return explicitReportType;
+  }
+  return reportPeriod === "30d" ? "monthly" : "standard";
+}
+
 function countDaysInclusive(startDate, endDate) {
   const start = parseDate(startDate);
   const end = parseDate(endDate);
@@ -279,7 +288,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
         monthlyUrlWinnersLosers: insights.monthlyUrlWinnersLosers,
         filters: {
           ...(sourceInfo.filters || {}),
-          reportType,
+          reportType: normalizedReportType,
           reportPeriod,
           pageContains,
           searchType: input.searchType || "web",
