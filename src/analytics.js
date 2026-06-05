@@ -401,6 +401,247 @@ export function buildContentOpportunitySnapshot(rows, currentRange, previousRang
   };
 }
 
+
+function monthLabel(range) {
+  const parsed = parseDate(range?.end || range?.start);
+  return parsed ? parsed.format("MMMM YYYY") : "—";
+}
+
+function hasMeaningfulUrlVolume(row) {
+  return Number(row.currentClicks || 0) + Number(row.previousClicks || 0) >= 10 || Number(row.currentImpressions || 0) + Number(row.previousImpressions || 0) >= 500;
+}
+
+function buildReasonTags(row) {
+  const tags = [];
+  const ctrDelta = Number(row.currentCtr || 0) - Number(row.previousCtr || 0);
+
+  if (row.previousClicks === 0 && (row.currentClicks > 0 || row.currentImpressions >= 50)) {
+    tags.push("New page gaining traction");
+  }
+  if (row.clickDelta > 0 && row.impressionPct !== null && row.impressionPct >= 50) {
+    tags.push("Seasonal spike");
+  }
+  if (row.clickDelta > 0) {
+    if (ctrDelta >= 0.005) tags.push("CTR improved");
+    if (row.positionChange !== null && row.positionChange >= 0.5) tags.push("Ranking improved");
+    if (row.impressionDelta > 0) tags.push("Impressions increased");
+  }
+  if (row.clickDelta < 0) {
+    tags.push("Clicks dropped");
+    if (row.impressionDelta < 0) tags.push("Impressions dropped");
+    if (ctrDelta <= -0.005) tags.push("CTR dropped");
+    if (row.positionChange !== null && row.positionChange <= -0.5) tags.push("Ranking dropped");
+  }
+
+  return [...new Set(tags)].slice(0, 3);
+}
+
+function decorateMonthlyUrlRow(row) {
+  const reasonTags = buildReasonTags(row);
+  return {
+    ...row,
+    reasonTags,
+    reasonTag: reasonTags[0] || (row.clickDelta >= 0 ? "Impressions increased" : "Clicks dropped"),
+  };
+}
+
+function summarizeKeywordsForRange(keywordRows = [], range) {
+  const grouped = new Map();
+
+  for (const row of keywordRows || []) {
+    if (!row.date || !row.query || !inRange(row.date, range?.start, range?.end)) {
+      continue;
+    }
+    const key = String(row.query || "").trim().toLowerCase();
+    const existing = grouped.get(key) || {
+      query: String(row.query || "").trim(),
+      url: row.url || "",
+      clicks: 0,
+      impressions: 0,
+      weightedPosition: 0,
+      urlClicks: new Map(),
+    };
+    const clicks = Number(row.clicks || 0);
+    const impressions = Number(row.impressions || 0);
+    existing.clicks += clicks;
+    existing.impressions += impressions;
+    existing.weightedPosition += Number(row.position || 0) * impressions;
+    existing.urlClicks.set(row.url || "", (existing.urlClicks.get(row.url || "") || 0) + clicks);
+    grouped.set(key, existing);
+  }
+
+  return grouped;
+}
+
+function finalizeKeywordSummary(summary = {}) {
+  const urlEntries = Array.from(summary.urlClicks?.entries?.() || []).sort((a, b) => b[1] - a[1]);
+  const impressions = Number(summary.impressions || 0);
+  const clicks = Number(summary.clicks || 0);
+  return {
+    query: summary.query || "",
+    url: urlEntries[0]?.[0] || summary.url || "",
+    clicks,
+    impressions,
+    ctr: impressions > 0 ? clicks / impressions : 0,
+    position: impressions > 0 ? Number(summary.weightedPosition || 0) / impressions : null,
+  };
+}
+
+function compareKeywordMaps(currentMap, previousMap) {
+  const keys = new Set([...currentMap.keys(), ...previousMap.keys()]);
+  return Array.from(keys).map((key) => {
+    const current = finalizeKeywordSummary(currentMap.get(key) || {});
+    const previous = finalizeKeywordSummary(previousMap.get(key) || {});
+    const clickDelta = current.clicks - previous.clicks;
+    const impressionDelta = current.impressions - previous.impressions;
+    return {
+      query: current.query || previous.query,
+      url: current.url || previous.url,
+      currentClicks: current.clicks,
+      previousClicks: previous.clicks,
+      clickDelta,
+      clickPct: pctFromDelta(clickDelta, previous.clicks),
+      currentImpressions: current.impressions,
+      previousImpressions: previous.impressions,
+      impressionDelta,
+      impressionPct: pctFromDelta(impressionDelta, previous.impressions),
+      currentCtr: current.ctr,
+      previousCtr: previous.ctr,
+      currentPosition: current.position,
+      previousPosition: previous.position,
+      positionChange: previous.position !== null && current.position !== null ? previous.position - current.position : null,
+    };
+  });
+}
+
+function compactSummaryItem(item, fallbackType = "URL") {
+  return {
+    type: item.query ? "Query" : fallbackType,
+    label: item.query || item.url || "—",
+    url: item.url || "",
+    currentClicks: item.currentClicks ?? item.clicks ?? 0,
+    previousClicks: item.previousClicks ?? null,
+    clickDelta: item.clickDelta ?? null,
+    currentImpressions: item.currentImpressions ?? item.impressions ?? 0,
+    ctr: item.currentCtr ?? item.ctr ?? 0,
+    avgPosition: item.currentPosition ?? item.position ?? null,
+    reason: item.reasonTag || item.recommendation || item.reason || "Review for impact",
+  };
+}
+
+function buildRecommendedFocus({ metricSummary, topLosses, topOpportunities }) {
+  if (topLosses.length) {
+    return `Recover traffic on ${topLosses[0].label} while testing CTR/ranking fixes on the highest-impression opportunities.`;
+  }
+  if (topOpportunities.length) {
+    return `Prioritize title/meta and content improvements for ${topOpportunities[0].label} to convert existing impressions into more clicks.`;
+  }
+  if (metricSummary?.hasPreviousData && metricSummary.clicks?.delta > 0) {
+    return "Protect this month's winners with content refreshes, internal links, and snippet monitoring.";
+  }
+  return "Review the highest-impression pages and queries, then prioritize CTR and near-page-1 improvements next month.";
+}
+
+export function buildMonthlyUrlWinnersLosers({ rows = [], currentRange, previousRange } = {}) {
+  const hasPreviousData = hasSufficientPreviousPeriodData(rows, previousRange);
+  const currentMap = summarizeByUrl(rows, currentRange?.start, currentRange?.end);
+  const previousMap = hasPreviousData ? summarizeByUrl(rows, previousRange?.start, previousRange?.end) : new Map();
+  const compared = hasPreviousData ? compareUrlMaps(currentMap, previousMap).map(decorateMonthlyUrlRow) : [];
+  const meaningful = compared.filter(hasMeaningfulUrlVolume);
+
+  const ctrOpportunities = Array.from(currentMap.values())
+    .map(finalizeUrlSummary)
+    .filter((row) => row.impressions >= 100 && row.position > 0 && row.position <= 12 && ((row.position <= 3 && row.ctr < 0.08) || (row.position <= 5 && row.ctr < 0.04) || row.ctr < 0.025))
+    .sort((a, b) => b.impressions - a.impressions || a.ctr - b.ctr)
+    .slice(0, 12)
+    .map((row) => ({ ...row, recommendation: "High impressions with below-expected CTR for current rankings." }));
+
+  const newRisingUrls = hasPreviousData
+    ? compared
+        .filter((row) => row.previousClicks === 0 && (row.currentClicks > 0 || row.currentImpressions >= 50))
+        .sort((a, b) => b.currentClicks - a.currentClicks || b.currentImpressions - a.currentImpressions)
+        .slice(0, 12)
+    : [];
+
+  return {
+    currentRange,
+    previousRange,
+    hasPreviousData,
+    note: hasPreviousData ? null : "Previous month data is insufficient. Showing current-month opportunity data only; month-over-month deltas are hidden.",
+    urlWinners: [...meaningful].filter((row) => row.clickDelta > 0).sort((a, b) => b.clickDelta - a.clickDelta || b.currentImpressions - a.currentImpressions).slice(0, 12),
+    urlLosers: [...meaningful].filter((row) => row.clickDelta < 0).sort((a, b) => a.clickDelta - b.clickDelta || b.previousClicks - a.previousClicks).slice(0, 12),
+    ctrOpportunities,
+    newRisingUrls,
+  };
+}
+
+export function buildMonthlyExecutiveSummary({ rows = [], keywordRows = [], currentRange, previousRange } = {}) {
+  const currentRows = filterRowsByRange(rows, currentRange?.start, currentRange?.end);
+  const previousRows = filterRowsByRange(rows, previousRange?.start, previousRange?.end);
+  const current = summarizeRows(currentRows);
+  const previous = summarizeRows(previousRows);
+  const hasPreviousData = hasSufficientPreviousPeriodData(rows, previousRange);
+  const delta = hasPreviousData ? buildDelta(current, previous) : null;
+  const monthlyUrls = buildMonthlyUrlWinnersLosers({ rows, currentRange, previousRange });
+  const currentKeywordMap = summarizeKeywordsForRange(keywordRows, currentRange);
+  const previousKeywordMap = hasPreviousData ? summarizeKeywordsForRange(keywordRows, previousRange) : new Map();
+  const keywordCompared = hasPreviousData ? compareKeywordMaps(currentKeywordMap, previousKeywordMap).filter((row) => row.currentImpressions + row.previousImpressions >= 100 || row.currentClicks + row.previousClicks >= 5) : [];
+
+  const keywordWins = keywordCompared
+    .filter((row) => row.clickDelta > 0 || row.positionChange >= 1)
+    .sort((a, b) => b.clickDelta - a.clickDelta || (b.positionChange || 0) - (a.positionChange || 0))
+    .slice(0, 3)
+    .map((row) => compactSummaryItem({ ...row, reason: row.positionChange >= 1 ? "Ranking improved" : "Clicks increased" }, "Query"));
+  const keywordLosses = keywordCompared
+    .filter((row) => row.clickDelta < 0 || row.positionChange <= -1)
+    .sort((a, b) => a.clickDelta - b.clickDelta || (a.positionChange || 0) - (b.positionChange || 0))
+    .slice(0, 3)
+    .map((row) => compactSummaryItem({ ...row, reason: row.positionChange <= -1 ? "Ranking dropped" : "Clicks dropped" }, "Query"));
+
+  const urlWins = monthlyUrls.urlWinners.slice(0, 3).map((row) => compactSummaryItem(row));
+  const urlLosses = monthlyUrls.urlLosers.slice(0, 3).map((row) => compactSummaryItem(row));
+  const currentKeywordRows = Array.from(currentKeywordMap.values()).map(finalizeKeywordSummary);
+  const keywordCtrOps = currentKeywordRows
+    .filter((row) => row.impressions >= 100 && row.position !== null && row.position <= 12 && ((row.position <= 3 && row.ctr < 0.08) || (row.position <= 5 && row.ctr < 0.04) || row.ctr < 0.025))
+    .map((row) => compactSummaryItem({ ...row, reason: "High impressions + low CTR" }, "Query"));
+  const nearPageOneOps = currentKeywordRows
+    .filter((row) => row.impressions >= 100 && row.position !== null && row.position > 8 && row.position <= 20)
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, 5)
+    .map((row) => compactSummaryItem({ ...row, reason: "Near page 1 query" }, "Query"));
+  const rankingDropOps = keywordCompared
+    .filter((row) => row.currentImpressions >= 100 && row.positionChange !== null && row.positionChange <= -1)
+    .sort((a, b) => b.currentImpressions - a.currentImpressions)
+    .slice(0, 5)
+    .map((row) => compactSummaryItem({ ...row, reason: "Ranking drop with high impressions" }, "Query"));
+  const urlCtrOps = monthlyUrls.ctrOpportunities.slice(0, 5).map((row) => compactSummaryItem({ ...row, reason: "High impressions + low CTR" }));
+  const topOpportunities = [...keywordCtrOps, ...nearPageOneOps, ...rankingDropOps, ...urlCtrOps]
+    .sort((a, b) => b.currentImpressions - a.currentImpressions || a.ctr - b.ctr)
+    .slice(0, 3);
+
+  const metricSummary = {
+    hasPreviousData,
+    warning: hasPreviousData ? null : "Previous month data is insufficient. Current summary is shown without deltas to avoid misleading comparisons.",
+    clicks: { current: current.clicks, previous: hasPreviousData ? previous.clicks : null, delta: delta?.clicks.absolute ?? null, deltaPercent: delta?.clicks.percent ?? null },
+    impressions: { current: current.impressions, previous: hasPreviousData ? previous.impressions : null, delta: delta?.impressions.absolute ?? null, deltaPercent: delta?.impressions.percent ?? null },
+    ctr: { current: current.ctr, previous: hasPreviousData ? previous.ctr : null, pointDelta: delta?.ctr.absolute ?? null },
+    position: { current: current.position, previous: hasPreviousData ? previous.position : null, positionChange: delta?.position.absolute ?? null },
+  };
+
+  const topWins = [...urlWins, ...keywordWins].sort((a, b) => (b.clickDelta || 0) - (a.clickDelta || 0) || b.currentImpressions - a.currentImpressions).slice(0, 3);
+  const topLosses = [...urlLosses, ...keywordLosses].sort((a, b) => (a.clickDelta || 0) - (b.clickDelta || 0) || b.currentImpressions - a.currentImpressions).slice(0, 3);
+
+  return {
+    currentMonthLabel: monthLabel(currentRange),
+    previousMonthLabel: monthLabel(previousRange),
+    metricSummary,
+    topWins,
+    topLosses,
+    topOpportunities,
+    recommendedFocus: buildRecommendedFocus({ metricSummary, topLosses, topOpportunities }),
+  };
+}
+
 export function buildUrlMovement30Days(rows, endDate) {
   const currentRange = clampDateRangeByDays(endDate, 30);
   const previousEnd = dayjs(currentRange.start).subtract(1, "day").format("YYYY-MM-DD");
@@ -540,6 +781,17 @@ export function buildSeoInsights({ rows, keywordRows = [], endDate, currentRange
   );
   const urlMovement30Days = buildUrlMovement30Days(rows, safeEnd);
   const url6MonthInsights = build6MonthUrlInsights(rows, safeEnd);
+  const monthlyExecutiveSummary = buildMonthlyExecutiveSummary({
+    rows,
+    keywordRows,
+    currentRange: selectedPeriodOverview.currentRange,
+    previousRange: selectedPeriodOverview.previousRange,
+  });
+  const monthlyUrlWinnersLosers = buildMonthlyUrlWinnersLosers({
+    rows,
+    currentRange: selectedPeriodOverview.currentRange,
+    previousRange: selectedPeriodOverview.previousRange,
+  });
 
   return {
     generatedAt: dayjs().format("YYYY-MM-DD HH:mm:ss"),
@@ -552,12 +804,16 @@ export function buildSeoInsights({ rows, keywordRows = [], endDate, currentRange
     contentOpportunitySnapshot,
     urlMovement30Days,
     url6MonthInsights,
+    monthlyExecutiveSummary,
+    monthlyUrlWinnersLosers,
     dataAvailabilityNotes: [
       selectedPeriodOverview.note,
       performance3MonthComparison.note,
       contentOpportunitySnapshot.note,
       urlMovement30Days.hasPreviousData ? null : "Previous 30-day URL movement comparison may be limited by fetched data range.",
       url6MonthInsights.note,
+      monthlyExecutiveSummary.metricSummary?.warning,
+      monthlyUrlWinnersLosers.note,
     ].filter(Boolean),
   };
 }

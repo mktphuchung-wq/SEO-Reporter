@@ -38,6 +38,8 @@ function compactUrlTable(table) {
     currentPosition: row.currentPosition,
     previousPosition: row.previousPosition,
     positionChange: row.positionChange,
+    reasonTag: row.reasonTag,
+    reasonTags: row.reasonTags,
     recommendation: row.recommendation,
   }));
 }
@@ -49,6 +51,8 @@ function compactLowCtrRows(rows) {
     impressions: row.impressions,
     ctr: row.ctr,
     position: row.position,
+    reasonTag: row.reasonTag,
+    reasonTags: row.reasonTags,
     recommendation: row.recommendation,
   }));
 }
@@ -139,6 +143,8 @@ function buildCompactReportSummary(reportSummary = {}) {
     ctrOpportunities,
     nearPageOneKeywords,
     reportTablesForAI,
+    monthlyExecutiveSummary,
+    monthlyUrlWinnersLosers,
   } = reportSummary;
 
   return {
@@ -185,6 +191,17 @@ function buildCompactReportSummary(reportSummary = {}) {
         fastestDeclining: compactUrlTable(performance3MonthComparison?.outstandingUrls?.fastestDeclining),
       },
     },
+    monthlyExecutiveSummary: monthlyExecutiveSummary || {},
+    monthlyUrlWinnersLosers: {
+      currentRange: monthlyUrlWinnersLosers?.currentRange,
+      previousRange: monthlyUrlWinnersLosers?.previousRange,
+      hasPreviousData: Boolean(monthlyUrlWinnersLosers?.hasPreviousData),
+      note: monthlyUrlWinnersLosers?.note,
+      urlWinners: compactUrlTable(monthlyUrlWinnersLosers?.urlWinners),
+      urlLosers: compactUrlTable(monthlyUrlWinnersLosers?.urlLosers),
+      ctrOpportunities: compactLowCtrRows(monthlyUrlWinnersLosers?.ctrOpportunities),
+      newRisingUrls: compactUrlTable(monthlyUrlWinnersLosers?.newRisingUrls),
+    },
     last30Contribution: reportTablesForAI?.last30Contribution || reportSummary.last30Contribution || {},
     contentOpportunitySnapshot: {
       note: contentOpportunitySnapshot?.note,
@@ -211,11 +228,25 @@ function buildCompactReportSummary(reportSummary = {}) {
 }
 
 function buildUserPrompt(compactReportSummary) {
+  const filters = compactReportSummary.filters || {};
+  const isMonthly = filters.reportType === "monthly" || filters.reportPeriod === "monthly" || filters.reportPeriod === "30d";
+  const monthlyInstructions = isMonthly ? `
+
+Vì reportType = monthly, bắt buộc thêm các ý sau trong phân tích:
+- Recommended focus for next month.
+- Top monthly wins.
+- Top monthly risks.
+- Top monthly optimization actions.
+- Compare Previous → Current.
+- Use only provided data.
+- Mention if previous month data is insufficient.
+` : "";
   return `Phân tích báo cáo Google Search Console dưới đây.
 
 Yêu cầu đầu ra bằng tiếng Việt, dạng Markdown, không cần JSON.
 
 Chỉ sử dụng dữ liệu được cung cấp. Không tự tạo YoY, quý, hoặc so sánh khác nếu dữ liệu không có. Nếu hasPreviousData=false hoặc dataAvailabilityNote báo thiếu dữ liệu kỳ trước, hãy ghi rõ dữ liệu kỳ trước không đủ và chỉ nêu chỉ số hiện tại cho phần đó. Khi so sánh metric, luôn viết theo chiều Previous → Current; không bao giờ đảo thành Current → Previous.
+${monthlyInstructions}
 
 Cấu trúc bắt buộc:
 
