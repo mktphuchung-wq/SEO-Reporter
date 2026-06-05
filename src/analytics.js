@@ -242,8 +242,8 @@ function compareUrlMaps(currentMap, previousMap) {
   return rows;
 }
 
-export function buildSelectedPeriodOverview(rows, currentRange) {
-  const previousRange = buildComparableRange(currentRange);
+export function buildSelectedPeriodOverview(rows, currentRange, previousRangeOverride = null) {
+  const previousRange = previousRangeOverride || buildComparableRange(currentRange);
   const currentRows = filterRowsByRange(rows, currentRange?.start, currentRange?.end);
   const previousRows = previousRange ? filterRowsByRange(rows, previousRange.start, previousRange.end) : [];
   const current = summarizeRows(currentRows);
@@ -524,13 +524,13 @@ export function build6MonthUrlInsights(rows, endDate) {
   };
 }
 
-export function buildSeoInsights({ rows, keywordRows = [], endDate, currentRange }) {
+export function buildSeoInsights({ rows, keywordRows = [], endDate, currentRange, previousRange }) {
   const pageDataSpan = inferDateSpan(rows);
   const keywordDataSpan = inferDateSpan(keywordRows);
   const dataSpan = pageDataSpan || keywordDataSpan;
   const safeEnd = (parseDate(endDate) ?? (dataSpan ? parseDate(dataSpan.end) : dayjs())).format("YYYY-MM-DD");
   const selectedRange = currentRange || { start: dataSpan?.start || safeEnd, end: safeEnd };
-  const selectedPeriodOverview = buildSelectedPeriodOverview(rows, selectedRange);
+  const selectedPeriodOverview = buildSelectedPeriodOverview(rows, selectedRange, previousRange);
   const performance3MonthComparison = build3MonthComparison(rows, safeEnd);
   const last30Contribution = buildLast30Contribution(rows, performance3MonthComparison.currentRange);
   const contentOpportunitySnapshot = buildContentOpportunitySnapshot(
