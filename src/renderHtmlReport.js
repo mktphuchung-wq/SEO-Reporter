@@ -251,48 +251,104 @@ function renderUrlMovement(movement) {
   });
 }
 
+
+function isMarkdownTableDivider(line) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function splitMarkdownTableRow(line) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function renderMarkdownTable(lines) {
+  if (lines.length < 2 || !isMarkdownTableDivider(lines[1])) {
+    return `<pre class="markdown-pre">${escapeHtml(lines.join("\n"))}</pre>`;
+  }
+
+  const headerCells = splitMarkdownTableRow(lines[0]);
+  const bodyRows = lines.slice(2).filter((line) => line.trim()).map(splitMarkdownTableRow);
+
+  return `<table class="markdown-table"><thead><tr>${headerCells.map((cell) => `<th>${escapeHtml(cell)}</th>`).join("")}</tr></thead><tbody>${bodyRows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+function flushMarkdownList(items) {
+  if (!items.length) return "";
+  return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderMarkdownLite(markdown = "") {
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const html = [];
+  let listItems = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+
+    if (trimmed.includes("|") && lines[index + 1] && isMarkdownTableDivider(lines[index + 1])) {
+      html.push(flushMarkdownList(listItems));
+      listItems = [];
+      const tableLines = [line, lines[index + 1]];
+      index += 2;
+      while (index < lines.length && lines[index].trim().includes("|")) {
+        tableLines.push(lines[index]);
+        index += 1;
+      }
+      index -= 1;
+      html.push(renderMarkdownTable(tableLines));
+      continue;
+    }
+
+    const heading2 = trimmed.match(/^##\s+(.+)$/);
+    const heading3 = trimmed.match(/^###\s+(.+)$/);
+    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
+    const checkbox = trimmed.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
+
+    if (heading2 || heading3 || (!bullet && trimmed === "")) {
+      html.push(flushMarkdownList(listItems));
+      listItems = [];
+    }
+
+    if (heading2) {
+      html.push(`<h3>${escapeHtml(heading2[1])}</h3>`);
+    } else if (heading3) {
+      html.push(`<h4>${escapeHtml(heading3[1])}</h4>`);
+    } else if (checkbox) {
+      const checked = checkbox[1].toLowerCase() === "x" ? "☑" : "☐";
+      listItems.push(`${checked} ${checkbox[2]}`);
+    } else if (bullet) {
+      listItems.push(bullet[1]);
+    } else if (trimmed === "") {
+      html.push("");
+    } else {
+      html.push(`<p>${escapeHtml(trimmed)}</p>`);
+    }
+  }
+
+  html.push(flushMarkdownList(listItems));
+  return `<div class="ai-markdown">${html.filter((item) => item !== "").join("\n")}</div>`;
+}
+
 function renderAiUnavailable(aiInsights) {
-  const diagnostics = aiInsights?.diagnostics || {};
-  const debugDetails = process.env.NODE_ENV !== "production" && Object.keys(diagnostics).length
-    ? `<details class="note-box"><summary>OpenRouter debug (non-production)</summary><pre>${escapeHtml(JSON.stringify(diagnostics, null, 2))}</pre></details>`
+  const debug = aiInsights?.debug || "";
+  const debugDetails = process.env.NODE_ENV !== "production" && debug
+    ? `<details class="note-box"><summary>OpenRouter debug (non-production)</summary><pre>${escapeHtml(debug)}</pre></details>`
     : "";
 
   return `<p class="empty">${escapeHtml(aiInsights?.message || "OpenRouter AI insight failed, but the SEO report was generated.")}</p>${debugDetails}`;
 }
 
 function renderAiInsights(aiInsights) {
+  const hasMarkdown = Boolean(aiInsights?.available && aiInsights?.markdown);
+
   return `<section>
     <h2>OpenRouter AI SEO Insights</h2>
-    ${aiInsights.available ? `
-      ${aiInsights.parseError ? `<p class="note-box">${escapeHtml(aiInsights.parseError)}</p>` : ""}
-      ${aiInsights.rawText && aiInsights.parseError ? `<details class="note-box" open><summary>Raw OpenRouter response</summary><pre>${escapeHtml(aiInsights.rawText)}</pre></details>` : ""}
-      <div class="two-col">
-        <div><h3>Executive Summary</h3>${aiList(aiInsights.executiveSummary)}</div>
-        <div><h3>What Changed</h3>${rowsToTable(aiInsights.whatChanged || [], {
-          header: "<tr><th>Finding</th><th>Evidence</th><th>Impact</th></tr>",
-          row: (item) => `<tr><td>${escapeHtml(item.finding)}</td><td>${escapeHtml(item.evidence)}</td><td>${priorityBadge(item.impact)}</td></tr>`,
-        })}</div>
-        <div><h3>Risks</h3>${rowsToTable(aiInsights.risks || [], {
-          header: "<tr><th>Risk</th><th>Evidence</th><th>Recommended action</th></tr>",
-          row: (item) => `<tr><td>${escapeHtml(item.risk)}</td><td>${escapeHtml(item.evidence)}</td><td>${escapeHtml(item.recommendedAction)}</td></tr>`,
-        })}</div>
-        <div><h3>Opportunities</h3>${rowsToTable(aiInsights.opportunities || [], {
-          header: "<tr><th>Opportunity</th><th>Evidence</th><th>Recommended action</th></tr>",
-          row: (item) => `<tr><td>${escapeHtml(item.opportunity)}</td><td>${escapeHtml(item.evidence)}</td><td>${escapeHtml(item.recommendedAction)}</td></tr>`,
-        })}</div>
-      </div>
-      <h3 style="margin-top:12px;">Recommendation Actions</h3>
-      ${rowsToTable(aiInsights.recommendationActions || [], {
-        header: "<tr><th>Priority</th><th>Action</th><th>Target URL</th><th>Target query</th><th>Why</th><th>Expected impact</th><th>Effort</th></tr>",
-        row: (item) => `<tr><td>${priorityBadge(item.priority)}</td><td>${escapeHtml(item.action)}</td><td class="url">${linkedUrl(item.targetUrl)}</td><td>${escapeHtml(item.targetQuery)}</td><td>${escapeHtml(item.why)}</td><td>${escapeHtml(item.expectedImpact)}</td><td>${escapeHtml(item.effort)}</td></tr>`,
-      })}
-      <h3 style="margin-top:12px;">Content Refresh Plan</h3>
-      ${rowsToTable(aiInsights.contentRefreshPlan || [], {
-        header: "<tr><th>URL</th><th>Reason</th><th>Update suggestion</th><th>Supporting queries</th></tr>",
-        row: (item) => `<tr><td class="url">${linkedUrl(item.url)}</td><td>${escapeHtml(item.reason)}</td><td>${escapeHtml(item.updateSuggestion)}</td><td>${escapeHtml((item.supportingQueries || []).join(", "))}</td></tr>`,
-      })}
-      <h3 style="margin-top:12px;">Next Report Focus</h3>${aiList(aiInsights.nextReportFocus)}
-    ` : renderAiUnavailable(aiInsights)}
+    ${hasMarkdown ? renderMarkdownLite(aiInsights.markdown) : renderAiUnavailable(aiInsights)}
   </section>`;
 }
 
