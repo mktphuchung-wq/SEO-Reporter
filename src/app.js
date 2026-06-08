@@ -9,7 +9,7 @@ import { renderHomePage as renderDashboardHomePage } from "./pages/homePage.js";
 import { renderNewReportPage } from "./pages/newReportPage.js";
 import { renderSettingsPage } from "./pages/settingsPage.js";
 import { renderReportsPage } from "./pages/reportsPage.js";
-import { renderUrlPerformancePage } from "./pages/urlPerformancePage.js";
+import { renderUrlPerformancePage, renderUrlPerformancePlaceholderPage } from "./pages/urlPerformancePage.js";
 import { renderHtmlReport } from "./renderHtmlReport.js";
 import { escapeHtml } from "./ui/html.js";
 import { filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
@@ -731,9 +731,27 @@ app.get("/settings", (req, res) => {
   );
 });
 
-app.get("/tools/url-performance", (req, res) => {
+app.get("/tools/url-performance", async (req, res) => {
+  const { sites, googleApiError } = await loadSitesResultForSession(req);
   res.type("html").send(
     renderUrlPerformancePage({
+      sites,
+      authenticated: Boolean(getGoogleTokens(req)),
+      user: req.session.user,
+      googleApiError,
+      defaultValues: {
+        selectedSiteUrl: req.session.selectedSiteUrl,
+        searchType: req.session.searchType,
+      },
+    }),
+  );
+});
+
+app.post("/tools/url-performance", (req, res) => {
+  req.session.selectedSiteUrl = req.body.siteUrl || req.session.selectedSiteUrl;
+  req.session.searchType = req.body.searchType || req.session.searchType;
+  res.type("html").send(
+    renderUrlPerformancePlaceholderPage({
       authenticated: Boolean(getGoogleTokens(req)),
       user: req.session.user,
     }),
