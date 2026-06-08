@@ -9,6 +9,7 @@ import { renderHomePage as renderDashboardHomePage } from "./pages/homePage.js";
 import { renderNewReportPage } from "./pages/newReportPage.js";
 import { renderSettingsPage } from "./pages/settingsPage.js";
 import { renderReportsPage } from "./pages/reportsPage.js";
+import { renderUrlPerformancePage } from "./pages/urlPerformancePage.js";
 import { renderHtmlReport } from "./renderHtmlReport.js";
 import { escapeHtml } from "./ui/html.js";
 import { filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
@@ -726,6 +727,15 @@ app.get("/settings", (req, res) => {
       sessionActive: Boolean(req.session),
       debugRoutesEnabled: isEnvEnabled(process.env.ENABLE_DEBUG_ROUTES),
       envHealth: buildEnvHealth(),
+    }),
+  );
+});
+
+app.get("/tools/url-performance", (req, res) => {
+  res.type("html").send(
+    renderUrlPerformancePage({
+      authenticated: Boolean(getGoogleTokens(req)),
+      user: req.session.user,
     }),
   );
 });
