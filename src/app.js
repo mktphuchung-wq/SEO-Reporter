@@ -1027,22 +1027,6 @@ function renderReportStatusPage(job) {
 </html>`;
 }
 
-function renderReportListPage(jobs) {
-  const rows = jobs
-    .map((job) => {
-      const encodedId = encodeURIComponent(job.id);
-      const filters = job.filters || job.report_json?.filters || {};
-      const ai = job.ai_insights || job.report_json?.aiInsights || job.report_json?.keywordOpportunities?.aiInsights || {};
-      const aiLabel = ai.available ? "Enabled / available" : (ai.message === "AI insight not requested." ? "Not enabled" : "Unavailable");
-      return `<tr><td>${escapeHtml(formatJobTimestamp(job.completed_at || job.created_at))}</td><td>${escapeHtml(job.property_url || job.source_info?.property || "—")}</td><td>${escapeHtml(job.start_date || job.source_info?.range?.start || "—")} → ${escapeHtml(job.end_date || job.source_info?.range?.end || "—")}</td><td>${escapeHtml(job.report_period || reportPeriodLabelForFilters(filters))}</td><td>${escapeHtml(job.page_contains || filters.pageContains || "None")}</td><td>${escapeHtml(aiLabel)}</td><td><a href="/reports/${encodedId}/view">View</a></td></tr>`;
-    })
-    .join("");
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Saved Reports</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#edf3ea;color:#12232e;margin:0}.shell{width:min(1100px,94vw);margin:40px auto}.card{background:#fff;border:1px solid #d7dfdc;border-radius:14px;padding:22px;overflow:auto}.btn{display:inline-block;padding:10px 14px;border-radius:8px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:700}table{border-collapse:collapse;width:100%;margin-top:16px}th,td{border-bottom:1px solid #d7dfdc;padding:10px;text-align:left}th{font-size:.85rem;text-transform:uppercase;color:#53615c}</style></head>
-<body><main class="shell"><section class="card"><h1>Saved Reports</h1><p>Only reports explicitly saved from a generated preview appear here.</p><p><a class="btn" href="/reports/new">Generate Preview</a></p>${jobs.length ? `<table><thead><tr><th>Saved</th><th>Property</th><th>Date range</th><th>Report period</th><th>Page filter</th><th>AI</th><th>View</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No saved reports found for this signed-in user yet.</p>"}</section></main></body></html>`;
-}
 
 app.post("/reports", async (_req, res) => {
   res.status(410).type("html").send(renderSafeSaveErrorPage("Async report jobs are disabled for preview-first persistence. Use Generate Preview, then click Save Report on the generated report page."));
@@ -1069,7 +1053,7 @@ app.post("/reports/save", async (req, res) => {
 app.get("/reports", async (req, res) => {
   try {
     const jobs = await listRecentReportJobs({ userEmail: req.session?.user?.email || null, limit: 30 });
-    res.type("html").send(renderReportListPage(jobs));
+    res.type("html").send(renderReportsPage({ jobs, user: req.session.user, authenticated: Boolean(getGoogleTokens(req)), activeNav: "reports" }));
   } catch (error) {
     res.status(500).type("html").send(`<p>${escapeHtml(safeErrorMessage(error, "Unable to load report history."))}</p><p><a href="/">Back to builder</a></p>`);
   }
