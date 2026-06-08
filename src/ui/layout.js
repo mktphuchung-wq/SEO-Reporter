@@ -1,15 +1,19 @@
 import { escapeHtml } from "./html.js";
 
-export function renderNav({ activeNav = "dashboard" } = {}) {
+export function renderAppNav({ active = "new-report" } = {}) {
   const links = [
-    { id: "dashboard", href: "/", label: "Dashboard" },
-    { id: "new-report", href: "/reports/new", label: "Generate Preview" },
+    { id: "new-report", href: "/reports/new", label: "SEO Reports" },
+    { id: "url-performance", href: "/tools/url-performance", label: "URL Performance Compare" },
     { id: "reports", href: "/reports", label: "Saved Reports" },
     { id: "settings", href: "/settings", label: "Settings" },
   ];
   return `<nav class="app-nav" aria-label="Primary navigation">${links
-    .map((link) => `<a class="${activeNav === link.id ? "active" : ""}" href="${link.href}">${escapeHtml(link.label)}</a>`)
+    .map((link) => `<a class="${active === link.id ? "active" : ""}" href="${link.href}">${escapeHtml(link.label)}</a>`)
     .join("")}</nav>`;
+}
+
+export function renderNav({ activeNav = "new-report" } = {}) {
+  return renderAppNav({ active: activeNav });
 }
 
 export function renderHeader({ authenticated = false, user = null } = {}) {
@@ -46,7 +50,7 @@ export function renderLayout({ title = "SEO Reporter", body = "", user = null, a
 <body>
   <main class="shell">
     ${renderHeader({ authenticated, user })}
-    ${renderNav({ activeNav })}
+    ${renderAppNav({ active: activeNav })}
     ${body}
   </main>
 </body>
