@@ -17,6 +17,25 @@ export function renderHomePage({ sites = [], authenticated = false, user = null,
       ? "No Search Console properties found for this Google account. Make sure this account has access in Google Search Console."
       : "Google Search Console properties are loaded from the authenticated Google account.";
 
+  const dashboardCards = [
+    { title: "Generate SEO Report", href: "/reports/new", body: "Create a new Search Console or CSV-powered SEO report preview." },
+    { title: "Compare URL Performance", href: "/tools/url-performance", body: "Review URL-level performance changes and spot movement across pages." },
+    { title: "Saved Reports", href: "/reports", body: "Open previews that were explicitly saved for reporting history." },
+    { title: "Settings", href: "/settings", body: "Manage account preferences and reporting configuration." },
+  ];
+
+  const dashboardCardSection = `
+    <section class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-bottom:16px;">
+      ${dashboardCards.map((card) => `
+        <article class="card">
+          <h2>${escapeHtml(card.title)}</h2>
+          <p class="muted">${escapeHtml(card.body)}</p>
+          <a class="btn" href="${escapeHtml(card.href)}">${escapeHtml(card.title)}</a>
+        </article>
+      `).join("")}
+    </section>
+  `;
+
   const body = `
     ${renderAlert({ type: "success", message: success })}
     ${renderAlert({ type: "warning", message: warning || (googleApiError ? propertyMessage : "") })}
@@ -32,6 +51,8 @@ export function renderHomePage({ sites = [], authenticated = false, user = null,
         ${authenticated ? `<a class="btn btn-secondary" href="/auth/logout">Logout Google</a>` : ""}
       </div>
     </section>
+
+    ${dashboardCardSection}
 
     ${!authenticated ? renderEmptyState({
       title: "Authenticate Google first",
