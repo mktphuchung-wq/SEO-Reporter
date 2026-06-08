@@ -9,7 +9,8 @@ import { renderHomePage as renderDashboardHomePage } from "./pages/homePage.js";
 import { renderNewReportPage } from "./pages/newReportPage.js";
 import { renderSettingsPage } from "./pages/settingsPage.js";
 import { renderReportsPage } from "./pages/reportsPage.js";
-import { renderUrlPerformancePage, renderUrlPerformancePlaceholderPage } from "./pages/urlPerformancePage.js";
+import { renderUrlPerformancePage, renderUrlPerformanceValidationPage } from "./pages/urlPerformancePage.js";
+import { normalizeUrlCompareRequest } from "./urlPerformanceCompare.js";
 import { renderHtmlReport } from "./renderHtmlReport.js";
 import { escapeHtml } from "./ui/html.js";
 import { filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
@@ -748,12 +749,20 @@ app.get("/tools/url-performance", async (req, res) => {
 });
 
 app.post("/tools/url-performance", (req, res) => {
+  const normalized = normalizeUrlCompareRequest(req.body);
   req.session.selectedSiteUrl = req.body.siteUrl || req.session.selectedSiteUrl;
   req.session.searchType = req.body.searchType || req.session.searchType;
-  res.type("html").send(
-    renderUrlPerformancePlaceholderPage({
+
+  res.status(normalized.requestErrors.length ? 400 : 200).type("html").send(
+    renderUrlPerformanceValidationPage({
       authenticated: Boolean(getGoogleTokens(req)),
       user: req.session.user,
+      result: normalized,
+      defaultValues: {
+        selectedSiteUrl: req.session.selectedSiteUrl,
+        searchType: req.session.searchType,
+        urlList: req.body.urlList,
+      },
     }),
   );
 });

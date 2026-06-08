@@ -122,6 +122,78 @@ function renderUrlPerformanceForm({ sites = [], defaultValues = {} } = {}) {
     </script>`;
 }
 
+
+function renderList(items = [], type = "warning") {
+  if (!items.length) return "";
+  return `
+    <section class="card">
+      <h2>${type === "error" ? "Request errors" : "Warnings"}</h2>
+      <ul>
+        ${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+    </section>`;
+}
+
+function renderInvalidRowsTable(invalidRows = []) {
+  if (!invalidRows.length) {
+    return `
+      <section class="card">
+        <h2>Invalid URL rows</h2>
+        <p class="muted">No invalid URL rows found.</p>
+      </section>`;
+  }
+
+  return `
+    <section class="card">
+      <h2>Invalid URL rows</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Row</th><th>URL</th><th>Error</th><th>Raw input</th></tr>
+          </thead>
+          <tbody>
+            ${invalidRows
+              .map(
+                (row) => `<tr>
+                  <td>${escapeHtml(row.rowNumber)}</td>
+                  <td>${escapeHtml(row.url || "")}</td>
+                  <td>${escapeHtml((row.errors || []).join("; "))}</td>
+                  <td><code>${escapeHtml(row.raw || "")}</code></td>
+                </tr>`,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+function renderCompareWindows(compareWindows = []) {
+  return `
+    <section class="card">
+      <h2>Generated compare windows</h2>
+      <p class="muted">These windows are generated automatically with the default 2-day Search Console data delay. No GSC query has been run yet.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Window</th><th>Previous range</th><th>Current range</th></tr>
+          </thead>
+          <tbody>
+            ${compareWindows
+              .map(
+                (window) => `<tr>
+                  <td><strong>${escapeHtml(window.label)}</strong></td>
+                  <td>${escapeHtml(window.previousRange.label)}: ${escapeHtml(window.previousRange.start)} → ${escapeHtml(window.previousRange.end)}</td>
+                  <td>${escapeHtml(window.currentRange.label)}: ${escapeHtml(window.currentRange.start)} → ${escapeHtml(window.currentRange.end)}</td>
+                </tr>`,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
 export function renderUrlPerformancePage({ sites = [], user = null, authenticated = false, defaultValues = {}, googleApiError = null, error = "" } = {}) {
   const noPropertiesWarning = authenticated && !googleApiError && sites.length === 0 ? "No Search Console properties found for this account." : "";
   const googleWarning = googleApiError ? `Search Console API error: ${googleApiError.message}` : "";
@@ -152,20 +224,28 @@ export function renderUrlPerformancePage({ sites = [], user = null, authenticate
   });
 }
 
-export function renderUrlPerformancePlaceholderPage({ user = null, authenticated = false } = {}) {
+export function renderUrlPerformanceValidationPage({ user = null, authenticated = false, result = {}, defaultValues = {} } = {}) {
   const body = `
     <section class="hero">
       <div>
         <p class="muted">SEO tools</p>
-        <h1>URL Performance Compare</h1>
-        <p>URL Performance Compare backend is not implemented yet.</p>
+        <h1>URL Performance Compare validation</h1>
+        <p>URL-list-only input was parsed, duplicates were removed, and 1M/2M/3M comparison periods were generated. No Google Search Console API query was run.</p>
       </div>
       <div class="actions"><a class="btn btn-secondary" href="/tools/url-performance">Back to URL compare</a></div>
     </section>
+
     <section class="card">
-      <h2>URL Performance Compare backend is not implemented yet.</h2>
-      <p class="muted">No Google Search Console comparison query was run. This placeholder keeps the form flow available until backend comparison logic is added.</p>
+      <h2>Validation summary</h2>
+      <p><strong>${escapeHtml(result.validCount || 0)}</strong> valid unique URLs from <strong>${escapeHtml(result.rowCount || 0)}</strong> parsed rows.</p>
+      <p><strong>${escapeHtml(result.invalidCount || 0)}</strong> invalid rows need review.</p>
+      <p class="muted">Search type: ${escapeHtml(defaultValues.searchType || "web")}</p>
     </section>
+
+    ${renderList(result.requestErrors || [], "error")}
+    ${renderList(result.warnings || [], "warning")}
+    ${renderInvalidRowsTable(result.invalidRows || [])}
+    ${renderCompareWindows(result.compareWindows || [])}
   `;
 
   return renderLayout({
