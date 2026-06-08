@@ -66,6 +66,113 @@ function normalizeKeywordRow(row) {
   };
 }
 
+
+function sanitizeGscErrorMessage(message) {
+  return String(message || "Google Search Console API request failed.")
+    .replace(/Bearer\s+[A-Za-z0-9._~+\-/]+=*/gi, "Bearer [REDACTED]")
+    .replace(/(access_token|refresh_token|client_secret|client_id|private_key|api_key|key)=([^&\s]+)/gi, "$1=[REDACTED]")
+    .replace(/"(access_token|refresh_token|client_secret|client_id|private_key|api_key|key)"\s*:\s*"[^"]+"/gi, '"$1":"[REDACTED]"');
+}
+
+function toSafeGscError(error) {
+  const status = error?.response?.status || error?.code || error?.status;
+  const rawMessage = error?.response?.data?.error?.message || error?.errors?.[0]?.message || error?.message;
+  const safeMessage = sanitizeGscErrorMessage(rawMessage);
+  const safeError = new Error(`Google Search Console API request failed${status ? ` (${status})` : ""}: ${safeMessage}`);
+  if (status) {
+    safeError.status = status;
+  }
+  return safeError;
+}
+
+function getPathnameForGscFallback(url, siteUrl) {
+  try {
+    return new URL(url).pathname;
+  } catch (_absoluteUrlError) {
+    try {
+      return new URL(url, siteUrl).pathname;
+    } catch (_relativeUrlError) {
+      return "";
+    }
+  }
+}
+
+function buildPageFilterGroups({ operator, expression }) {
+  return [
+    {
+      filters: [
+        {
+          dimension: "page",
+          operator,
+          expression,
+        },
+      ],
+    },
+  ];
+}
+
+function normalizeUrlPerformance({ url, startDate, endDate, clicks = 0, impressions = 0, position = null, matchType }) {
+  const normalizedClicks = Number(clicks) || 0;
+  const normalizedImpressions = Number(impressions) || 0;
+
+  return {
+    url,
+    startDate,
+    endDate,
+    clicks: normalizedClicks,
+    impressions: normalizedImpressions,
+    ctr: normalizedImpressions > 0 ? normalizedClicks / normalizedImpressions : 0,
+    position: normalizedImpressions > 0 && Number.isFinite(Number(position)) ? Number(position) : null,
+    matchType,
+  };
+}
+
+function aggregateUrlPerformanceRows(rows = []) {
+  let clicks = 0;
+  let impressions = 0;
+  let weightedPositionTotal = 0;
+
+  for (const row of rows) {
+    const rowClicks = Number(row.clicks) || 0;
+    const rowImpressions = Number(row.impressions) || 0;
+    const rowPosition = Number(row.position);
+
+    clicks += rowClicks;
+    impressions += rowImpressions;
+    if (rowImpressions > 0 && Number.isFinite(rowPosition)) {
+      weightedPositionTotal += rowPosition * rowImpressions;
+    }
+  }
+
+  return {
+    clicks,
+    impressions,
+    position: impressions > 0 ? weightedPositionTotal / impressions : null,
+  };
+}
+
+async function queryGscUrlPerformanceRows({ auth, siteUrl, startDate, endDate, searchType, operator, expression, rowLimit }) {
+  const webmasters = google.webmasters({ version: "v3", auth });
+
+  try {
+    const response = await webmasters.searchanalytics.query({
+      siteUrl,
+      requestBody: {
+        startDate,
+        endDate,
+        dimensions: ["page"],
+        searchType,
+        rowLimit,
+        dimensionFilterGroups: buildPageFilterGroups({ operator, expression }),
+      },
+    });
+
+    return response.data.rows || [];
+  } catch (error) {
+    throw toSafeGscError(error);
+  }
+}
+
 function resolveAuth({ authClient, keyFile }) {
   if (authClient) {
     return authClient;
@@ -272,6 +379,119 @@ export async function fetchGscKeywordRows({
     dimensions,
     normalizer: normalizeKeywordRow,
   });
+}
+
+
+export async function fetchGscUrlPerformance({
+  siteUrl,
+  url,
+  startDate,
+  endDate,
+  searchType = "web",
+  authClient,
+}) {
+  if (!siteUrl) {
+    throw new Error("Missing siteUrl for GSC URL performance request.");
+  }
+
+  if (!url) {
+    throw new Error("Missing url for GSC URL performance request.");
+  }
+
+  if (!startDate || !endDate) {
+    throw new Error("startDate and endDate are required for GSC URL performance request.");
+  }
+
+  const auth = resolveAuth({ authClient });
+  const exactRows = await queryGscUrlPerformanceRows({
+    auth,
+    siteUrl,
+    startDate,
+    endDate,
+    searchType,
+    operator: "equals",
+    expression: url,
+    rowLimit: 1,
+  });
+
+  if (exactRows.length > 0) {
+    const [row] = exactRows;
+    return normalizeUrlPerformance({
+      url,
+      startDate,
+      endDate,
+      clicks: row.clicks,
+      impressions: row.impressions,
+      position: row.position,
+      matchType: "exact",
+    });
+  }
+
+  const pathname = getPathnameForGscFallback(url, siteUrl);
+  if (!pathname) {
+    return normalizeUrlPerformance({ url, startDate, endDate, matchType: "none" });
+  }
+
+  const fallbackRows = await queryGscUrlPerformanceRows({
+    auth,
+    siteUrl,
+    startDate,
+    endDate,
+    searchType,
+    operator: "contains",
+    expression: pathname,
+    rowLimit: 1000,
+  });
+
+  if (fallbackRows.length === 0) {
+    return normalizeUrlPerformance({ url, startDate, endDate, matchType: "none" });
+  }
+
+  return normalizeUrlPerformance({
+    url,
+    startDate,
+    endDate,
+    ...aggregateUrlPerformanceRows(fallbackRows),
+    matchType: "pathname_contains",
+  });
+}
+
+export async function fetchGscUrlPerformanceForWindow({
+  siteUrl,
+  url,
+  window,
+  searchType = "web",
+  authClient,
+}) {
+  if (!window?.previousRange || !window?.currentRange) {
+    throw new Error("window.previousRange and window.currentRange are required for GSC URL performance window request.");
+  }
+
+  const previous = await fetchGscUrlPerformance({
+    siteUrl,
+    url,
+    startDate: window.previousRange.startDate || window.previousRange.start,
+    endDate: window.previousRange.endDate || window.previousRange.end,
+    searchType,
+    authClient,
+  });
+
+  const current = await fetchGscUrlPerformance({
+    siteUrl,
+    url,
+    startDate: window.currentRange.startDate || window.currentRange.start,
+    endDate: window.currentRange.endDate || window.currentRange.end,
+    searchType,
+    authClient,
+  });
+
+  return {
+    url,
+    windowKey: window.key,
+    windowLabel: window.label,
+    previous,
+    current,
+  };
 }
 
 export function normalizeGscSiteEntries(entries = []) {
