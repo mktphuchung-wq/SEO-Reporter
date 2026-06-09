@@ -224,13 +224,13 @@ export function renderUrlPerformancePage({ sites = [], user = null, authenticate
   });
 }
 
-export function renderUrlPerformanceValidationPage({ user = null, authenticated = false, result = {}, defaultValues = {} } = {}) {
+export function renderUrlPerformanceValidationPage({ sites = [], user = null, authenticated = false, result = {}, defaultValues = {}, googleApiError = null } = {}) {
   const body = `
     <section class="hero">
       <div>
         <p class="muted">SEO tools</p>
         <h1>URL Performance Compare validation</h1>
-        <p>URL-list-only input was parsed, duplicates were removed, and 1M/2M/3M comparison periods were generated. No Google Search Console API query was run.</p>
+        <p>URL-list-only input was parsed, duplicates were removed, and 1M/2M/3M comparison periods were generated. No Google Search Console API query was run because the request needs review.</p>
       </div>
       <div class="actions"><a class="btn btn-secondary" href="/tools/url-performance">Back to URL compare</a></div>
     </section>
@@ -242,14 +242,121 @@ export function renderUrlPerformanceValidationPage({ user = null, authenticated 
       <p class="muted">Search type: ${escapeHtml(defaultValues.searchType || "web")}</p>
     </section>
 
+    ${renderAlert({ type: "warning", message: googleApiError ? `Search Console API error: ${googleApiError.message}` : "" })}
     ${renderList(result.requestErrors || [], "error")}
     ${renderList(result.warnings || [], "warning")}
     ${renderInvalidRowsTable(result.invalidRows || [])}
     ${renderCompareWindows(result.compareWindows || [])}
+    ${authenticated ? renderUrlPerformanceForm({ sites, defaultValues }) : ""}
   `;
 
   return renderLayout({
     title: "URL Performance Compare · SEO Reporter",
+    body,
+    user,
+    authenticated,
+    activeNav: "url-performance",
+  });
+}
+
+function formatInteger(value) {
+  return new Intl.NumberFormat("en-US").format(Number(value) || 0);
+}
+
+function formatPercent(value) {
+  if (value == null) return "new";
+  return `${(Number(value) * 100).toFixed(1)}%`;
+}
+
+function formatDecimal(value, digits = 2) {
+  if (value == null) return "N/A";
+  return Number(value).toFixed(digits);
+}
+
+function renderStatusCounts(statusCounts = {}) {
+  const entries = Object.entries(statusCounts);
+  if (!entries.length) return '<p class="muted">No comparison rows generated.</p>';
+  return `<div class="pill-row">${entries.map(([status, count]) => `<span class="badge">${escapeHtml(status)}: ${escapeHtml(count)}</span>`).join(" ")}</div>`;
+}
+
+function renderUrlPerformanceResultsTable(flatRows = []) {
+  if (!flatRows.length) {
+    return renderEmptyState({ title: "No results", body: "No URL/window comparison rows were generated." });
+  }
+
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Row</th><th>URL</th><th>Window</th><th>Previous</th><th>Current</th>
+            <th>Prev clicks</th><th>Curr clicks</th><th>Click Δ</th><th>Click Δ%</th>
+            <th>Prev impr.</th><th>Curr impr.</th><th>Impr. Δ</th><th>Impr. Δ%</th>
+            <th>Prev CTR</th><th>Curr CTR</th><th>Prev pos.</th><th>Curr pos.</th><th>Pos. Δ</th>
+            <th>Match</th><th>Status</th><th>Insight</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${flatRows.map((row) => `<tr>
+            <td>${escapeHtml(row.rowNumber)}</td>
+            <td><code>${escapeHtml(row.url)}</code></td>
+            <td>${escapeHtml(row.windowLabel || row.windowKey)}</td>
+            <td>${escapeHtml(row.previousStart)} → ${escapeHtml(row.previousEnd)}</td>
+            <td>${escapeHtml(row.currentStart)} → ${escapeHtml(row.currentEnd)}</td>
+            <td>${escapeHtml(formatInteger(row.previousClicks))}</td>
+            <td>${escapeHtml(formatInteger(row.currentClicks))}</td>
+            <td>${escapeHtml(formatInteger(row.clickDelta))}</td>
+            <td>${escapeHtml(formatPercent(row.clickDeltaPercent))}</td>
+            <td>${escapeHtml(formatInteger(row.previousImpressions))}</td>
+            <td>${escapeHtml(formatInteger(row.currentImpressions))}</td>
+            <td>${escapeHtml(formatInteger(row.impressionDelta))}</td>
+            <td>${escapeHtml(formatPercent(row.impressionDeltaPercent))}</td>
+            <td>${escapeHtml(formatPercent(row.previousCtr))}</td>
+            <td>${escapeHtml(formatPercent(row.currentCtr))}</td>
+            <td>${escapeHtml(formatDecimal(row.previousPosition))}</td>
+            <td>${escapeHtml(formatDecimal(row.currentPosition))}</td>
+            <td>${escapeHtml(formatDecimal(row.positionDelta))}</td>
+            <td>${escapeHtml(row.matchTypePrevious)} / ${escapeHtml(row.matchTypeCurrent)}</td>
+            <td><strong>${escapeHtml(row.status)}</strong></td>
+            <td>${escapeHtml(row.insight)}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+export function renderUrlPerformanceResultsPage({ user = null, authenticated = false, result = {}, comparison = {}, defaultValues = {} } = {}) {
+  const body = `
+    <section class="hero">
+      <div>
+        <p class="muted">SEO tools</p>
+        <h1>URL Performance Compare results</h1>
+        <p>Each valid URL was compared across the automatic 1M, 2M, and 3M windows.</p>
+      </div>
+      <div class="actions"><a class="btn btn-secondary" href="/tools/url-performance">Back to URL compare</a></div>
+    </section>
+
+    ${renderList(result.warnings || [], "warning")}
+    ${renderInvalidRowsTable(result.invalidRows || [])}
+
+    <section class="card">
+      <h2>Run summary</h2>
+      <p><strong>Property:</strong> ${escapeHtml(defaultValues.siteUrl || defaultValues.selectedSiteUrl || "")}</p>
+      <p><strong>Search type:</strong> ${escapeHtml(defaultValues.searchType || "web")}</p>
+      <p><strong>Total URLs checked:</strong> ${escapeHtml(result.validCount || 0)} valid URLs${result.invalidCount ? ` (${escapeHtml(result.invalidCount)} invalid rows skipped)` : ""}</p>
+      ${renderStatusCounts(comparison.statusCounts || {})}
+    </section>
+
+    ${renderCompareWindows(result.compareWindows || [])}
+
+    <section class="card">
+      <h2>Comparison rows</h2>
+      ${renderUrlPerformanceResultsTable(comparison.flatRows || [])}
+    </section>
+  `;
+
+  return renderLayout({
+    title: "URL Performance Compare Results · SEO Reporter",
     body,
     user,
     authenticated,
