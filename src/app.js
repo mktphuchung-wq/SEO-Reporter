@@ -10,7 +10,7 @@ import { renderNewReportPage } from "./pages/newReportPage.js";
 import { renderSettingsPage } from "./pages/settingsPage.js";
 import { renderReportsPage } from "./pages/reportsPage.js";
 import { renderUrlPerformancePage, renderUrlPerformanceResultsPage, renderUrlPerformanceValidationPage } from "./pages/urlPerformancePage.js";
-import { buildUrlPerformanceComparison, normalizeUrlCompareRequest } from "./urlPerformanceCompare.js";
+import { buildUrlCompareAiSummary, buildUrlPerformanceComparison, normalizeUrlCompareRequest } from "./urlPerformanceCompare.js";
 import { renderHtmlReport } from "./renderHtmlReport.js";
 import { escapeHtml } from "./ui/html.js";
 import { fetchGscUrlPerformance, filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
@@ -21,6 +21,7 @@ import {
   saveReportJob,
 } from "./db/reportJobs.js";
 import { generateReportFromInput } from "./services/reportGenerator.js";
+import { generateOpenRouterUrlCompareSummary } from "./ai/openRouterInsights.js";
 
 dotenv.config();
 
@@ -223,9 +224,14 @@ function getAuthorizedClient(req) {
 }
 
 function safeGoogleApiError(error) {
+  const message = error instanceof Error ? error.message : "Google API request failed.";
   return {
     status: error?.code || error?.status || error?.response?.status || null,
-    message: error instanceof Error ? error.message : "Google API request failed.",
+    message: message
+      .replace(/Bearer\s+[A-Za-z0-9._~+\-/]+=*/gi, "Bearer [redacted]")
+      .replace(/ya29\.[A-Za-z0-9._~+\-/]+/gi, "[redacted-google-token]")
+      .replace(/GOOGLE_[A-Z_]+=\S+/gi, "GOOGLE_SECRET=[redacted]")
+      .slice(0, 300),
   };
 }
 
@@ -782,6 +788,7 @@ app.post("/tools/url-performance", async (req, res) => {
           selectedSiteUrl: req.session.selectedSiteUrl,
           searchType: req.session.searchType,
           urlList: req.body.urlList,
+          enableAiSummary: req.body.enableAiSummary,
         },
       }),
     );
@@ -789,11 +796,13 @@ app.post("/tools/url-performance", async (req, res) => {
   }
 
   const normalized = normalizeUrlCompareRequest(req.body);
+  const enableAiSummary = req.body.enableAiSummary === "on" || req.body.enableAiSummary === "true";
   const defaultValues = {
     selectedSiteUrl: req.session.selectedSiteUrl,
     siteUrl: req.body.siteUrl,
     searchType: req.session.searchType,
     urlList: req.body.urlList,
+    enableAiSummary,
   };
 
   if (normalized.requestErrors.length || normalized.validRows.length === 0) {
@@ -823,39 +832,36 @@ app.post("/tools/url-performance", async (req, res) => {
   );
 
   const gscResults = await mapWithConcurrency(tasks, 3, async ({ row, compareWindow }) => {
-    try {
-      const previous = await fetchGscUrlPerformance({
-        siteUrl: req.body.siteUrl,
-        url: row.url,
-        startDate: compareWindow.previousRange.start,
-        endDate: compareWindow.previousRange.end,
-        searchType: req.body.searchType || "web",
-        authClient,
-      });
-      const current = await fetchGscUrlPerformance({
-        siteUrl: req.body.siteUrl,
-        url: row.url,
-        startDate: compareWindow.currentRange.start,
-        endDate: compareWindow.currentRange.end,
-        searchType: req.body.searchType || "web",
-        authClient,
-      });
-
-      return {
-        rowNumber: row.rowNumber,
-        url: row.url,
-        windowKey: compareWindow.key,
-        previous,
-        current,
-      };
-    } catch (error) {
-      return {
-        rowNumber: row.rowNumber,
-        url: row.url,
-        windowKey: compareWindow.key,
-        error: safeGoogleApiError(error),
-      };
+    async function fetchPeriod(range) {
+      try {
+        return {
+          ok: true,
+          data: await fetchGscUrlPerformance({
+            siteUrl: req.body.siteUrl,
+            url: row.url,
+            startDate: range.start,
+            endDate: range.end,
+            searchType: req.body.searchType || "web",
+            authClient,
+          }),
+        };
+      } catch (error) {
+        return { ok: false, error: safeGoogleApiError(error) };
+      }
     }
+
+    const previousResult = await fetchPeriod(compareWindow.previousRange);
+    const currentResult = await fetchPeriod(compareWindow.currentRange);
+    const hasFetchError = !previousResult.ok || !currentResult.ok;
+
+    return {
+      rowNumber: row.rowNumber,
+      url: row.url,
+      windowKey: compareWindow.key,
+      previous: previousResult.ok ? previousResult.data : undefined,
+      current: currentResult.ok ? currentResult.data : undefined,
+      error: hasFetchError ? { message: "GSC fetch failed for this URL/window." } : undefined,
+    };
   });
 
   const comparison = buildUrlPerformanceComparison({
@@ -864,6 +870,14 @@ app.post("/tools/url-performance", async (req, res) => {
     gscResults,
   });
 
+  const aiSummary = enableAiSummary
+    ? await generateOpenRouterUrlCompareSummary(buildUrlCompareAiSummary({
+      compareWindows: normalized.compareWindows,
+      comparison,
+      generatedAt: new Date(),
+    }))
+    : null;
+
   res.type("html").send(
     renderUrlPerformanceResultsPage({
       authenticated: true,
@@ -871,6 +885,7 @@ app.post("/tools/url-performance", async (req, res) => {
       result: normalized,
       comparison,
       defaultValues,
+      aiSummary,
     }),
   );
 });

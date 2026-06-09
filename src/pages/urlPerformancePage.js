@@ -29,6 +29,7 @@ function renderPropertySelector({ sites = [], siteUrl = "" } = {}) {
 function renderUrlPerformanceForm({ sites = [], defaultValues = {} } = {}) {
   const searchType = defaultValues.searchType || "web";
   const urlList = defaultValues.urlList || "";
+  const enableAiSummary = defaultValues.enableAiSummary === true || defaultValues.enableAiSummary === "on" || defaultValues.enableAiSummary === "true";
 
   return `
     <form class="card" method="post" action="/tools/url-performance" id="urlPerformanceForm">
@@ -59,6 +60,12 @@ function renderUrlPerformanceForm({ sites = [], defaultValues = {} } = {}) {
         <label for="urlList">URL list</label>
         <textarea id="urlList" name="urlList" rows="9" placeholder="https://example.com/page-a&#10;https://example.com/page-b&#10;https://example.com/page-c" required>${escapeHtml(urlList)}</textarea>
         ${renderFieldHelper("Nhập mỗi URL một dòng. App sẽ tự so sánh performance của từng URL trong 1 tháng, 2 tháng và 3 tháng gần nhất so với kỳ liền trước.")}
+        ${renderFieldHelper("For large URL lists, split into batches of 50–100 URLs. This tool runs 1M, 2M and 3M comparisons for every URL.")}
+      </div>
+
+      <div class="field checkbox-field">
+        <label><input type="checkbox" id="enableAiSummary" name="enableAiSummary" value="on" ${enableAiSummary ? "checked" : ""}> Ask AI to summarize this URL comparison</label>
+        ${renderFieldHelper("AI chỉ phân tích kết quả đã tóm tắt, không dùng raw GSC rows.")}
       </div>
 
       <div class="actions">
@@ -494,9 +501,106 @@ function renderUrlPerformanceResultsTable(flatRows = []) {
     <p class="empty-state url-filter-empty" id="urlFilterEmpty" hidden>No URLs in this category.</p>`;
 }
 
+function isMarkdownTableDivider(line) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function splitMarkdownTableRow(line) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function renderMarkdownTable(lines) {
+  if (lines.length < 2 || !isMarkdownTableDivider(lines[1])) {
+    return `<pre class="markdown-pre">${escapeHtml(lines.join("\n"))}</pre>`;
+  }
+
+  const headerCells = splitMarkdownTableRow(lines[0]);
+  const bodyRows = lines.slice(2).filter((line) => line.trim()).map(splitMarkdownTableRow);
+
+  return `<table class="markdown-table"><thead><tr>${headerCells.map((cell) => `<th>${escapeHtml(cell)}</th>`).join("")}</tr></thead><tbody>${bodyRows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+function flushMarkdownList(items) {
+  if (!items.length) return "";
+  return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderMarkdownLite(markdown = "") {
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const html = [];
+  let listItems = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+
+    if (trimmed.includes("|") && lines[index + 1] && isMarkdownTableDivider(lines[index + 1])) {
+      html.push(flushMarkdownList(listItems));
+      listItems = [];
+      const tableLines = [line, lines[index + 1]];
+      index += 2;
+      while (index < lines.length && lines[index].trim().includes("|")) {
+        tableLines.push(lines[index]);
+        index += 1;
+      }
+      index -= 1;
+      html.push(renderMarkdownTable(tableLines));
+      continue;
+    }
+
+    const heading2 = trimmed.match(/^##\s+(.+)$/);
+    const heading3 = trimmed.match(/^###\s+(.+)$/);
+    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
+    const checkbox = trimmed.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
+
+    if (heading2 || heading3 || (!bullet && trimmed === "")) {
+      html.push(flushMarkdownList(listItems));
+      listItems = [];
+    }
+
+    if (heading2) {
+      html.push(`<h3>${escapeHtml(heading2[1])}</h3>`);
+    } else if (heading3) {
+      html.push(`<h4>${escapeHtml(heading3[1])}</h4>`);
+    } else if (checkbox) {
+      const checked = checkbox[1].toLowerCase() === "x" ? "☑" : "☐";
+      listItems.push(`${checked} ${checkbox[2]}`);
+    } else if (bullet) {
+      listItems.push(bullet[1]);
+    } else if (trimmed === "") {
+      html.push("");
+    } else {
+      html.push(`<p>${escapeHtml(trimmed)}</p>`);
+    }
+  }
+
+  html.push(flushMarkdownList(listItems));
+  return `<div class="ai-markdown">${html.filter((item) => item !== "").join("\n")}</div>`;
+}
+
+function renderUrlCompareAiSummary(aiSummary) {
+  if (!aiSummary) return "";
+  const hasMarkdown = Boolean(aiSummary.available && aiSummary.markdown);
+  const debug = aiSummary.debug || "";
+  const debugDetails = process.env.NODE_ENV !== "production" && debug
+    ? `<details class="note-box"><summary>OpenRouter debug (non-production)</summary><pre>${escapeHtml(debug)}</pre></details>`
+    : "";
+
+  return `<section class="card ai-summary-card">
+    <h2>AI URL Performance Summary</h2>
+    <p class="muted">AI chỉ phân tích kết quả đã tóm tắt, không dùng raw GSC rows.</p>
+    ${hasMarkdown ? renderMarkdownLite(aiSummary.markdown) : `<p class="empty">${escapeHtml(aiSummary.message || "AI summary unavailable, but URL comparison completed.")}</p>${debugDetails}`}
+  </section>`;
+}
+
 function renderResultsPageStyles() {
   return `<style>
-    .url-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:16px}.metadata-card,.url-results-card,.invalid-rows-card{margin-bottom:16px}.metadata-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:12px 0 18px}.metadata-grid div{border:1px solid var(--line);border-radius:14px;background:var(--panel-2);padding:12px}.metadata-grid dt{color:var(--muted);font-weight:800;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}.metadata-grid dd{margin:6px 0 0;font-weight:800;overflow-wrap:anywhere}.metadata-card h3{font-family:"Space Grotesk";margin:8px 0 10px}.compare-window-list{display:grid;gap:8px;color:var(--muted)}.result-toolbar{display:flex;justify-content:space-between;gap:12px;align-items:flex-end;flex-wrap:wrap;margin:12px 0 16px}.window-tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}.window-tab{border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:999px;padding:10px 14px;font-weight:800;cursor:pointer}.window-tab.active,.window-tab:hover{background:var(--brand);border-color:var(--brand);color:#fff}.status-filter{min-width:220px}.export-actions{display:flex;gap:10px;flex-wrap:wrap}.url-results-table{min-width:1500px}.url-cell code{display:inline-block;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.insight-cell{min-width:260px}.delta-positive{color:var(--green);font-weight:800}.delta-negative{color:var(--red);font-weight:800}.delta-neutral{color:var(--gray);font-weight:700}.row-growth{background:rgba(220,252,231,.24)}.row-decline{background:rgba(254,226,226,.24)}.row-warning{background:rgba(255,237,213,.34)}.row-error{background:rgba(254,226,226,.42)}.row-stable{background:#fff}.status-error-row{box-shadow:inset 0 0 0 1px rgba(185,28,28,.12)}.url-filter-empty{margin-top:12px}.copy-status{align-self:center;color:var(--muted);font-weight:700}.table-scroll{overflow:auto;-webkit-overflow-scrolling:touch}@media(max-width:900px){.url-summary-grid,.metadata-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.result-toolbar{display:block}.status-filter{margin-top:12px;min-width:0}.export-actions .btn{width:100%}.url-cell code{max-width:220px}}@media(max-width:620px){.url-summary-grid,.metadata-grid{grid-template-columns:1fr}.window-tab{flex:1 0 auto}.url-results-table{min-width:1320px}}
+    .url-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:16px}.metadata-card,.url-results-card,.invalid-rows-card{margin-bottom:16px}.metadata-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:12px 0 18px}.metadata-grid div{border:1px solid var(--line);border-radius:14px;background:var(--panel-2);padding:12px}.metadata-grid dt{color:var(--muted);font-weight:800;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}.metadata-grid dd{margin:6px 0 0;font-weight:800;overflow-wrap:anywhere}.metadata-card h3{font-family:"Space Grotesk";margin:8px 0 10px}.compare-window-list{display:grid;gap:8px;color:var(--muted)}.result-toolbar{display:flex;justify-content:space-between;gap:12px;align-items:flex-end;flex-wrap:wrap;margin:12px 0 16px}.window-tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}.window-tab{border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:999px;padding:10px 14px;font-weight:800;cursor:pointer}.window-tab.active,.window-tab:hover{background:var(--brand);border-color:var(--brand);color:#fff}.status-filter{min-width:220px}.export-actions{display:flex;gap:10px;flex-wrap:wrap}.url-results-table{min-width:1500px}.url-cell code{display:inline-block;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.insight-cell{min-width:260px}.delta-positive{color:var(--green);font-weight:800}.delta-negative{color:var(--red);font-weight:800}.delta-neutral{color:var(--gray);font-weight:700}.row-growth{background:rgba(220,252,231,.24)}.row-decline{background:rgba(254,226,226,.24)}.row-warning{background:rgba(255,237,213,.34)}.row-error{background:rgba(254,226,226,.42)}.row-stable{background:#fff}.status-error-row{box-shadow:inset 0 0 0 1px rgba(185,28,28,.12)}.url-filter-empty{margin-top:12px}.copy-status{align-self:center;color:var(--muted);font-weight:700}.table-scroll{overflow:auto;-webkit-overflow-scrolling:touch}.ai-summary-card{margin-bottom:16px}.ai-markdown{display:grid;gap:10px}.ai-markdown h3{font-family:"Space Grotesk";margin:12px 0 0}.ai-markdown h4{margin:8px 0 0}.ai-markdown p,.ai-markdown ul{margin:0;color:var(--text)}.markdown-table{width:100%;border-collapse:collapse;margin-top:8px}.markdown-table th,.markdown-table td{border:1px solid var(--line);padding:8px;text-align:left;vertical-align:top}.markdown-pre{white-space:pre-wrap;background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:12px}.table-scroll{overflow:auto;-webkit-overflow-scrolling:touch}@media(max-width:900px){.url-summary-grid,.metadata-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.result-toolbar{display:block}.status-filter{margin-top:12px;min-width:0}.export-actions .btn{width:100%}.url-cell code{max-width:220px}}@media(max-width:620px){.url-summary-grid,.metadata-grid{grid-template-columns:1fr}.window-tab{flex:1 0 auto}.url-results-table{min-width:1320px}}
   </style>`;
 }
 
@@ -605,7 +709,7 @@ function renderResultsPageScript({ flatRows = [], generatedDate = "" } = {}) {
     </script>`;
 }
 
-export function renderUrlPerformanceResultsPage({ user = null, authenticated = false, result = {}, comparison = {}, defaultValues = {} } = {}) {
+export function renderUrlPerformanceResultsPage({ user = null, authenticated = false, result = {}, comparison = {}, defaultValues = {}, aiSummary = null } = {}) {
   const flatRows = comparison.flatRows || [];
   const generatedAt = new Date();
   const generatedDate = generatedAt.toISOString().slice(0, 10);
@@ -623,6 +727,7 @@ export function renderUrlPerformanceResultsPage({ user = null, authenticated = f
     ${renderList(result.warnings || [], "warning")}
     ${renderMetadataList({ result, comparison, defaultValues, generatedAt })}
     ${renderSummaryCards({ validCount: result.validCount || 0, rowCount: flatRows.length, statusCounts: comparison.statusCounts || {} })}
+    ${renderUrlCompareAiSummary(aiSummary)}
 
     <section class="card url-results-card">
       <div class="split">

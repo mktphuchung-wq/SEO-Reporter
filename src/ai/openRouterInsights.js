@@ -4,6 +4,7 @@ const DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:
 const DEFAULT_OPENROUTER_MAX_OUTPUT_TOKENS = 3500;
 const MAX_TABLE_ROWS_FOR_AI = 10;
 const SAFE_OPENROUTER_FAILURE_MESSAGE = "OpenRouter AI insight failed, but the SEO report was generated.";
+const SAFE_URL_COMPARE_AI_FAILURE_MESSAGE = "AI summary unavailable, but URL comparison completed.";
 const SYSTEM_PROMPT = "You are a senior SEO analyst. Your job is to analyze a completed Google Search Console report and write practical, evidence-based SEO insights in Vietnamese Markdown. Do not invent data. Only use the metrics, tables, URLs, and queries provided. If previous-period data is insufficient, explicitly say so and only discuss current-period metrics for that section. Do not invent YoY, quarterly, or other comparisons unless the provided data contains them. When comparing metrics, always write Previous → Current. Never reverse the direction. Correct: Clicks increased from 25,374 to 27,404 (+8.0%). Wrong: Clicks 27,404 → 25,374. Focus on what changed, why it matters, what needs attention, and what actions the SEO/content team should take next. Write in a concise but useful consulting style. Avoid generic SEO advice. Prioritize recommendations by expected impact.";
 
 function getPositiveInteger(value, fallback) {
@@ -361,5 +362,71 @@ export async function generateOpenRouterSeoInsights(reportSummary) {
     };
   } catch (error) {
     return fallbackUnavailable({ error, reason: error?.name === "AbortError" ? "timeout" : "api_error" });
+  }
+}
+
+
+function buildUrlComparePrompt(summary) {
+  return `You are a senior SEO analyst. Analyze this URL performance comparison across 1-month, 2-month, and 3-month windows. Write Vietnamese Markdown. Use only provided data. Focus on which URLs improved, which declined, which have high impressions but low CTR, and what actions the team should take next. Compare previous period to current period. Do not invent data.
+
+Required Markdown sections:
+## Tổng quan URL Performance
+## Xu hướng 1 tháng
+## Xu hướng 2 tháng
+## Xu hướng 3 tháng
+## URL tăng trưởng đáng chú ý
+## URL suy giảm cần kiểm tra
+## Cơ hội CTR
+## Recommended Actions
+
+Provided compact summary (raw GSC rows, tokens, and secrets are not included):
+${JSON.stringify(summary, null, 2)}`;
+}
+
+function fallbackUrlCompareUnavailable(errorOrDebug = {}) {
+  const debug = typeof errorOrDebug === "string"
+    ? errorOrDebug
+    : safeDebugMessage(errorOrDebug?.error, errorOrDebug?.reason || "unavailable");
+
+  return {
+    available: false,
+    markdown: "",
+    message: SAFE_URL_COMPARE_AI_FAILURE_MESSAGE,
+    debug,
+  };
+}
+
+export async function generateOpenRouterUrlCompareSummary(summary) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    return fallbackUrlCompareUnavailable({ reason: "missing_api_key" });
+  }
+
+  if (typeof fetch !== "function") {
+    return fallbackUrlCompareUnavailable({ reason: "fetch_unavailable" });
+  }
+
+  const model = normalizeOpenRouterModelName(process.env.OPENROUTER_MODEL);
+  const messages = [
+    { role: "system", content: "You are a senior SEO analyst. Write Vietnamese Markdown. Use only provided compact URL comparison data. Do not invent data." },
+    { role: "user", content: buildUrlComparePrompt(summary) },
+  ];
+
+  try {
+    const data = await callOpenRouter({ apiKey, model, messages });
+    const markdown = String(data?.choices?.[0]?.message?.content || "").trim();
+
+    if (!markdown) {
+      return fallbackUrlCompareUnavailable({ reason: "empty_response" });
+    }
+
+    return {
+      available: true,
+      provider: "openrouter",
+      model,
+      markdown,
+    };
+  } catch (error) {
+    return fallbackUrlCompareUnavailable({ error, reason: error?.name === "AbortError" ? "timeout" : "api_error" });
   }
 }
