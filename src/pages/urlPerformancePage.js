@@ -668,7 +668,7 @@ function renderResultsPageScript({ flatRows = [], generatedDate = "" } = {}) {
         function csvEscape(value) {
           if (value == null) return "";
           const text = String(value);
-          if (/[",\r\n]/.test(text)) {
+          if (/[",\\r\\n]/.test(text)) {
             return '"' + text.replace(/"/g, '""') + '"';
           }
           return text;
@@ -678,7 +678,7 @@ function renderResultsPageScript({ flatRows = [], generatedDate = "" } = {}) {
           const dataRows = readCsvRows();
           const header = csvColumns.join(",");
           const body = dataRows.map((row) => csvColumns.map((column) => csvEscape(row[column])).join(","));
-          return [header, ...body].join("\n");
+          return [header, ...body].join("\\n");
         }
 
         downloadButton?.addEventListener("click", () => {
