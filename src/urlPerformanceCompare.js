@@ -1,6 +1,7 @@
 const ALLOWED_SEARCH_TYPES = new Set(["web", "image", "video", "news"]);
 const DEFAULT_MAX_URLS = 50;
 const HARD_MAX_URLS = 100;
+const AI_SUMMARY_ROW_LIMIT = 10;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 function toStringValue(value) {
@@ -411,4 +412,96 @@ export function buildUrlPerformanceComparison({ validRows = [], compareWindows =
   }, {});
 
   return { flatRows, groupedRows, statusCounts };
+}
+
+
+function compactAiRow(row = {}) {
+  return {
+    url: row.url,
+    windowKey: row.windowKey,
+    windowLabel: row.windowLabel,
+    previousRange: `${row.previousStart || ""} to ${row.previousEnd || ""}`,
+    currentRange: `${row.currentStart || ""} to ${row.currentEnd || ""}`,
+    previousClicks: row.previousClicks,
+    currentClicks: row.currentClicks,
+    clickDelta: row.clickDelta,
+    clickDeltaPercent: row.clickDeltaPercent,
+    previousImpressions: row.previousImpressions,
+    currentImpressions: row.currentImpressions,
+    impressionDelta: row.impressionDelta,
+    impressionDeltaPercent: row.impressionDeltaPercent,
+    previousCtr: row.previousCtr,
+    currentCtr: row.currentCtr,
+    previousPosition: row.previousPosition,
+    currentPosition: row.currentPosition,
+    positionDelta: row.positionDelta,
+    status: row.status,
+    insight: row.insight,
+  };
+}
+
+function topRows(rows = [], sorter, limit = AI_SUMMARY_ROW_LIMIT) {
+  return [...rows].sort(sorter).slice(0, limit).map(compactAiRow);
+}
+
+function countStatuses(rows = []) {
+  return rows.reduce((counts, row) => {
+    counts[row.status] = (counts[row.status] || 0) + 1;
+    return counts;
+  }, {});
+}
+
+export function buildUrlCompareAiSummary({ compareWindows = [], comparison = {}, generatedAt = new Date() } = {}) {
+  const flatRows = Array.isArray(comparison.flatRows) ? comparison.flatRows : [];
+
+  return {
+    generatedAt: generatedAt instanceof Date ? generatedAt.toISOString() : String(generatedAt || ""),
+    note: "Compact URL comparison summary only. Raw GSC rows, API tokens, and secrets are excluded.",
+    compareWindows: compareWindows.map((window) => ({
+      key: window.key,
+      label: window.label,
+      previousRange: {
+        start: window.previousRange?.start || "",
+        end: window.previousRange?.end || "",
+        label: window.previousRange?.label || "",
+      },
+      currentRange: {
+        start: window.currentRange?.start || "",
+        end: window.currentRange?.end || "",
+        label: window.currentRange?.label || "",
+      },
+    })),
+    windows: compareWindows.map((window) => {
+      const rows = flatRows.filter((row) => row.windowKey === window.key && row.status !== "Error");
+      const allWindowRows = flatRows.filter((row) => row.windowKey === window.key);
+
+      return {
+        key: window.key,
+        label: window.label,
+        previousRange: window.previousRange,
+        currentRange: window.currentRange,
+        statusCounts: countStatuses(allWindowRows),
+        topGrowingRows: topRows(
+          rows.filter((row) => row.status === "Growing" || row.status === "New traffic"),
+          (a, b) => (b.clickDelta - a.clickDelta) || (b.currentClicks - a.currentClicks),
+        ),
+        topDecliningRows: topRows(
+          rows.filter((row) => row.status === "Declining" || row.status === "Lost traffic"),
+          (a, b) => (a.clickDelta - b.clickDelta) || (b.previousClicks - a.previousClicks),
+        ),
+        topLowCtrRows: topRows(
+          rows.filter((row) => row.status === "High impressions low CTR" || (Number(row.currentImpressions) >= 500 && Number(row.currentCtr) < 0.01)),
+          (a, b) => (b.currentImpressions - a.currentImpressions) || (a.currentCtr - b.currentCtr),
+        ),
+        topLostTrafficRows: topRows(
+          rows.filter((row) => row.status === "Lost traffic"),
+          (a, b) => (b.previousClicks - a.previousClicks) || (a.currentClicks - b.currentClicks),
+        ),
+        topNewTrafficRows: topRows(
+          rows.filter((row) => row.status === "New traffic"),
+          (a, b) => (b.currentClicks - a.currentClicks) || (b.currentImpressions - a.currentImpressions),
+        ),
+      };
+    }),
+  };
 }
