@@ -9,11 +9,11 @@ import { renderHomePage as renderDashboardHomePage } from "./pages/homePage.js";
 import { renderNewReportPage } from "./pages/newReportPage.js";
 import { renderSettingsPage } from "./pages/settingsPage.js";
 import { renderReportsPage } from "./pages/reportsPage.js";
-import { renderUrlPerformancePage, renderUrlPerformanceValidationPage } from "./pages/urlPerformancePage.js";
-import { normalizeUrlCompareRequest } from "./urlPerformanceCompare.js";
+import { renderUrlPerformancePage, renderUrlPerformanceResultsPage, renderUrlPerformanceValidationPage } from "./pages/urlPerformancePage.js";
+import { buildUrlPerformanceComparison, normalizeUrlCompareRequest } from "./urlPerformanceCompare.js";
 import { renderHtmlReport } from "./renderHtmlReport.js";
 import { escapeHtml } from "./ui/html.js";
-import { filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
+import { fetchGscUrlPerformance, filterVerifiedGscSiteEntries, listGscSites, normalizeGscSiteEntries } from "./datasources/gscApi.js";
 import { query as dbQuery } from "./db/client.js";
 import {
   getReportJob,
@@ -227,6 +227,23 @@ function safeGoogleApiError(error) {
     status: error?.code || error?.status || error?.response?.status || null,
     message: error instanceof Error ? error.message : "Google API request failed.",
   };
+}
+
+async function mapWithConcurrency(items, concurrency, asyncFn) {
+  const limit = Math.max(1, Number(concurrency) || 1);
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await asyncFn(items[currentIndex], currentIndex);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+  return results;
 }
 
 
@@ -748,21 +765,112 @@ app.get("/tools/url-performance", async (req, res) => {
   );
 });
 
-app.post("/tools/url-performance", (req, res) => {
-  const normalized = normalizeUrlCompareRequest(req.body);
+app.post("/tools/url-performance", async (req, res) => {
+  const authClient = getAuthorizedClient(req);
+  const authenticated = Boolean(authClient);
   req.session.selectedSiteUrl = req.body.siteUrl || req.session.selectedSiteUrl;
   req.session.searchType = req.body.searchType || req.session.searchType;
 
-  res.status(normalized.requestErrors.length ? 400 : 200).type("html").send(
-    renderUrlPerformanceValidationPage({
-      authenticated: Boolean(getGoogleTokens(req)),
+  if (!authenticated) {
+    res.status(401).type("html").send(
+      renderUrlPerformancePage({
+        sites: [],
+        authenticated: false,
+        user: req.session.user,
+        error: "Authenticate Google first.",
+        defaultValues: {
+          selectedSiteUrl: req.session.selectedSiteUrl,
+          searchType: req.session.searchType,
+          urlList: req.body.urlList,
+        },
+      }),
+    );
+    return;
+  }
+
+  const normalized = normalizeUrlCompareRequest(req.body);
+  const defaultValues = {
+    selectedSiteUrl: req.session.selectedSiteUrl,
+    siteUrl: req.body.siteUrl,
+    searchType: req.session.searchType,
+    urlList: req.body.urlList,
+  };
+
+  if (normalized.requestErrors.length || normalized.validRows.length === 0) {
+    const { sites, googleApiError } = await loadSitesResultForSession(req);
+    const result = {
+      ...normalized,
+      requestErrors: normalized.validRows.length === 0 && !normalized.requestErrors.length
+        ? ["At least one valid URL is required before querying GSC."]
+        : normalized.requestErrors,
+    };
+
+    res.status(400).type("html").send(
+      renderUrlPerformanceValidationPage({
+        sites,
+        authenticated: true,
+        user: req.session.user,
+        googleApiError,
+        result,
+        defaultValues,
+      }),
+    );
+    return;
+  }
+
+  const tasks = normalized.validRows.flatMap((row) =>
+    normalized.compareWindows.map((compareWindow) => ({ row, compareWindow })),
+  );
+
+  const gscResults = await mapWithConcurrency(tasks, 3, async ({ row, compareWindow }) => {
+    try {
+      const previous = await fetchGscUrlPerformance({
+        siteUrl: req.body.siteUrl,
+        url: row.url,
+        startDate: compareWindow.previousRange.start,
+        endDate: compareWindow.previousRange.end,
+        searchType: req.body.searchType || "web",
+        authClient,
+      });
+      const current = await fetchGscUrlPerformance({
+        siteUrl: req.body.siteUrl,
+        url: row.url,
+        startDate: compareWindow.currentRange.start,
+        endDate: compareWindow.currentRange.end,
+        searchType: req.body.searchType || "web",
+        authClient,
+      });
+
+      return {
+        rowNumber: row.rowNumber,
+        url: row.url,
+        windowKey: compareWindow.key,
+        previous,
+        current,
+      };
+    } catch (error) {
+      return {
+        rowNumber: row.rowNumber,
+        url: row.url,
+        windowKey: compareWindow.key,
+        error: safeGoogleApiError(error),
+      };
+    }
+  });
+
+  const comparison = buildUrlPerformanceComparison({
+    validRows: normalized.validRows,
+    compareWindows: normalized.compareWindows,
+    gscResults,
+  });
+
+  res.type("html").send(
+    renderUrlPerformanceResultsPage({
+      authenticated: true,
       user: req.session.user,
       result: normalized,
-      defaultValues: {
-        selectedSiteUrl: req.session.selectedSiteUrl,
-        searchType: req.session.searchType,
-        urlList: req.body.urlList,
-      },
+      comparison,
+      defaultValues,
     }),
   );
 });

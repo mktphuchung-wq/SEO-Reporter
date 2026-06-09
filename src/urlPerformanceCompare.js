@@ -106,10 +106,12 @@ export function validateUrlCompareRequest({ siteUrl, searchType, urlList } = {})
     requestErrors.push("URL list is required.");
   }
 
+  if (rows.length > DEFAULT_MAX_URLS) {
+    warnings.push("For large URL lists, split into batches of 50–100 URLs.");
+  }
+
   if (rows.length > HARD_MAX_URLS) {
     requestErrors.push("Please split large URL lists into batches of 50–100 URLs to avoid timeout.");
-  } else if (rows.length > DEFAULT_MAX_URLS) {
-    warnings.push(`URL list has ${rows.length} URLs. For best performance, keep batches near ${DEFAULT_MAX_URLS} URLs.`);
   }
 
   const seenUrls = new Set();
@@ -244,4 +246,169 @@ export function normalizeUrlCompareRequest(input = {}) {
       gscDelayDays: input.gscDelayDays ?? 2,
     }),
   };
+}
+
+
+function toNumber(value, fallback = 0) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+}
+
+function toNullableNumber(value) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function buildPercentDelta(previousValue, currentValue) {
+  if (previousValue > 0) {
+    return (currentValue - previousValue) / previousValue;
+  }
+
+  if (currentValue > 0) {
+    return null;
+  }
+
+  return 0;
+}
+
+function buildUrlWindowStatus({ previousClicks, currentClicks, clickDelta, clickDeltaPercent, currentImpressions, currentCtr, error }) {
+  if (error) {
+    return "Error";
+  }
+
+  if (previousClicks === 0 && currentClicks > 0) {
+    return "New traffic";
+  }
+
+  if (previousClicks > 0 && currentClicks === 0) {
+    return "Lost traffic";
+  }
+
+  if (clickDeltaPercent != null && clickDeltaPercent >= 0.2 && clickDelta >= 5) {
+    return "Growing";
+  }
+
+  if (clickDeltaPercent != null && clickDeltaPercent <= -0.2 && clickDelta <= -5) {
+    return "Declining";
+  }
+
+  if (currentImpressions >= 500 && currentCtr < 0.01) {
+    return "High impressions low CTR";
+  }
+
+  return "Stable";
+}
+
+function buildUrlWindowInsight(status) {
+  switch (status) {
+    case "Growing":
+      return "Traffic increased meaningfully. Protect this URL and add internal links.";
+    case "Declining":
+      return "Traffic declined meaningfully. Review content freshness, title/meta, indexing, and ranking movement.";
+    case "High impressions low CTR":
+      return "High visibility but low CTR. Review title/meta and intent match.";
+    case "New traffic":
+      return "This URL started gaining clicks in the current period.";
+    case "Lost traffic":
+      return "This URL lost traffic in the current period. Check indexing, rankings, and seasonality.";
+    case "Error":
+      return "GSC fetch failed for this URL/window. Try again or check the URL/date range.";
+    case "Stable":
+    default:
+      return "Performance is stable.";
+  }
+}
+
+function buildEmptyPerformance(url, range = {}) {
+  return {
+    url,
+    startDate: range.start || range.startDate || "",
+    endDate: range.end || range.endDate || "",
+    clicks: 0,
+    impressions: 0,
+    ctr: 0,
+    position: null,
+    matchType: "none",
+  };
+}
+
+export function buildUrlPerformanceComparison({ validRows = [], compareWindows = [], gscResults = [] } = {}) {
+  const resultMap = new Map();
+
+  for (const result of gscResults) {
+    resultMap.set(`${result.rowNumber}::${result.url}::${result.windowKey}`, result);
+  }
+
+  const flatRows = [];
+  const groupedRows = validRows.map((row) => ({
+    rowNumber: row.rowNumber,
+    url: row.url,
+    windows: {},
+  }));
+  const groupedByKey = new Map(groupedRows.map((row) => [`${row.rowNumber}::${row.url}`, row]));
+
+  for (const row of validRows) {
+    for (const window of compareWindows) {
+      const result = resultMap.get(`${row.rowNumber}::${row.url}::${window.key}`) || {};
+      const previous = result.previous || buildEmptyPerformance(row.url, window.previousRange);
+      const current = result.current || buildEmptyPerformance(row.url, window.currentRange);
+      const previousClicks = toNumber(previous.clicks);
+      const currentClicks = toNumber(current.clicks);
+      const clickDelta = currentClicks - previousClicks;
+      const clickDeltaPercent = buildPercentDelta(previousClicks, currentClicks);
+      const previousImpressions = toNumber(previous.impressions);
+      const currentImpressions = toNumber(current.impressions);
+      const impressionDelta = currentImpressions - previousImpressions;
+      const impressionDeltaPercent = buildPercentDelta(previousImpressions, currentImpressions);
+      const previousPosition = toNullableNumber(previous.position);
+      const currentPosition = toNullableNumber(current.position);
+      const positionDelta = previousPosition == null || currentPosition == null ? null : previousPosition - currentPosition;
+      const status = buildUrlWindowStatus({
+        previousClicks,
+        currentClicks,
+        clickDelta,
+        clickDeltaPercent,
+        currentImpressions,
+        currentCtr: toNumber(current.ctr),
+        error: result.error,
+      });
+      const comparisonRow = {
+        rowNumber: row.rowNumber,
+        url: row.url,
+        windowKey: window.key,
+        windowLabel: window.label,
+        previousStart: window.previousRange?.start || previous.startDate || "",
+        previousEnd: window.previousRange?.end || previous.endDate || "",
+        currentStart: window.currentRange?.start || current.startDate || "",
+        currentEnd: window.currentRange?.end || current.endDate || "",
+        previousClicks,
+        currentClicks,
+        clickDelta,
+        clickDeltaPercent,
+        previousImpressions,
+        currentImpressions,
+        impressionDelta,
+        impressionDeltaPercent,
+        previousCtr: toNumber(previous.ctr),
+        currentCtr: toNumber(current.ctr),
+        previousPosition,
+        currentPosition,
+        positionDelta,
+        matchTypePrevious: previous.matchType || "none",
+        matchTypeCurrent: current.matchType || "none",
+        status,
+        insight: buildUrlWindowInsight(status),
+      };
+
+      flatRows.push(comparisonRow);
+      groupedByKey.get(`${row.rowNumber}::${row.url}`).windows[window.key] = comparisonRow;
+    }
+  }
+
+  const statusCounts = flatRows.reduce((counts, row) => {
+    counts[row.status] = (counts[row.status] || 0) + 1;
+    return counts;
+  }, {});
+
+  return { flatRows, groupedRows, statusCounts };
 }
