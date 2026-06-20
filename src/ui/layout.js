@@ -4,6 +4,7 @@ const sidebarGroups = [
   { label: "Overview", links: [{ id: "dashboard", href: "/", label: "Dashboard", icon: "⌂" }] },
   { label: "Reports", links: [{ id: "new-report", href: "/reports/new", label: "New SEO Report", icon: "+" }, { id: "reports", href: "/reports", label: "Saved Reports", icon: "▤" }] },
   { label: "Tools", links: [{ id: "url-performance", href: "/tools/url-performance", label: "URL Performance Compare", icon: "↗" }] },
+  { label: "Team", links: [{ id: "team", href: "/team", label: "Team Members", icon: "◎" }, { id: "team-performance", href: "/team/performance", label: "Team Performance", icon: "▣" }] },
   { label: "System", links: [{ id: "settings", href: "/settings", label: "Settings", icon: "⚙" }] },
 ];
 
