@@ -225,6 +225,8 @@ export function renderUrlPerformancePage({ sites = [], user = null, authenticate
 
   return renderLayout({
     title: "URL Performance Compare · SEO Reporter",
+    pageTitle: "URL Performance Compare",
+    pageDescription: "Compare URL-level performance across recent time windows.",
     body,
     user,
     authenticated,
@@ -260,6 +262,8 @@ export function renderUrlPerformanceValidationPage({ sites = [], user = null, au
 
   return renderLayout({
     title: "URL Performance Compare · SEO Reporter",
+    pageTitle: "URL Performance Compare",
+    pageDescription: "Compare URL-level performance across recent time windows.",
     body,
     user,
     authenticated,
@@ -764,6 +768,8 @@ export function renderUrlPerformanceResultsPage({ user = null, authenticated = f
 
   return renderLayout({
     title: "URL Performance Compare Results · SEO Reporter",
+    pageTitle: "URL Performance Compare",
+    pageDescription: "Compare URL-level performance across recent time windows.",
     body,
     user,
     authenticated,

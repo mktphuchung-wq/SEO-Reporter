@@ -232,5 +232,5 @@ export function renderNewReportPage({ sites = [], authenticated = false, user = 
       </script>`}
   `;
 
-  return renderLayout({ title: "Create New Report · SEO Reporter", body, user, authenticated, activeNav: "new-report" });
+  return renderLayout({ title: "New SEO Report · SEO Reporter", pageTitle: "New SEO Report", pageDescription: "Generate monthly, quarterly, or custom Search Console reports.", body, user, authenticated, activeNav: "new-report" });
 }

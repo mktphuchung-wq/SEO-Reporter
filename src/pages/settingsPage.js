@@ -43,5 +43,5 @@ export function renderSettingsPage({ authenticated = false, user = null, session
     </section>
   `;
 
-  return renderLayout({ title: "Settings · SEO Reporter", body, user, authenticated, activeNav: "settings" });
+  return renderLayout({ title: "Settings · SEO Reporter", pageTitle: "Settings", pageDescription: "Manage account, Google connection, and app configuration.", body, user, authenticated, activeNav: "settings" });
 }
