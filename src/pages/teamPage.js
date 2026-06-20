@@ -19,8 +19,21 @@ function layout({ title, pageTitle, pageDescription = "", body, activeNav = "tea
 }
 
 export function renderTeamMemberListPage({ members = [], user = null, authenticated = Boolean(user) } = {}) {
-  const rows = members.map((member) => `<tr>${td(`<a href="/team/${member.id}">${escapeHtml(member.name)}</a>`)}${td(escapeHtml(member.email || "—"))}${td(escapeHtml(member.default_property_url || "—"))}${td(formatNumber(member.url_count))}${td(member.latest_job_status ? renderStatusBadge(member.latest_job_status) : "—")}${td(formatNumber(member.latest_current_clicks))}${td(formatNumber(member.latest_current_impressions))}${td(`<form method="post" action="/team/${member.id}/run-quarterly" style="display:inline"><button class="btn btn-secondary" type="submit">Run quarterly report</button></form>`)}</tr>`);
-  const body = `<div class="actions"><a class="btn" href="/team/new">Add Member</a><a class="btn btn-secondary" href="/team/performance">Team Performance</a></div><br>${members.length ? table(["Member", "Email", "Default property", "URLs", "Last job", "Latest clicks", "Latest impressions", "Action"], rows) : '<div class="empty-state"><h2>No team members yet</h2><p>Create the first internal team member.</p></div>'}`;
+  const rows = members.map((member) => {
+    const memberId = encodeURIComponent(member.id);
+    const hasActiveUrlList = Number(member.active_url_list_count || 0) > 0 && Number(member.url_count || 0) > 0;
+    const actions = [
+      `<a class="btn btn-secondary" href="/team/${memberId}">View/Edit</a>`,
+      `<a class="btn btn-secondary" href="/team/${memberId}/url-list">URL List</a>`,
+      hasActiveUrlList
+        ? `<form method="post" action="/team/${memberId}/run-quarterly" style="display:inline"><button class="btn btn-secondary" type="submit">Run Quarterly</button></form>`
+        : `<span class="helper">No active URL list with URLs.</span>`,
+    ].join(" ");
+
+    return `<tr>${td(escapeHtml(member.name))}${td(escapeHtml(member.email || "—"))}${td(escapeHtml(member.role || "—"))}${td(member.status ? renderStatusBadge(member.status) : "—")}${td(escapeHtml(member.default_property_url || "—"))}${td(formatNumber(member.url_count))}${td(member.latest_job_status ? renderStatusBadge(member.latest_job_status) : "—")}${td(actions)}</tr>`;
+  });
+  const emptyState = '<div class="empty-state"><p>No team members yet. Add your first member to start tracking URL portfolios.</p></div>';
+  const body = `<div class="actions"><a class="btn" href="/team/new">Add Member</a><a class="btn btn-secondary" href="/team/performance">Team Performance</a></div><br>${members.length ? table(["Name", "Email", "Role", "Status", "Default Property", "URL Count", "Latest Job Status", "Actions"], rows) : emptyState}`;
 
   return layout({
     title: "Team Members · SEO Reporter",
