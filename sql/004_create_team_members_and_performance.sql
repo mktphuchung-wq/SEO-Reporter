@@ -33,6 +33,18 @@ create table if not exists team_member_url_lists (
   updated_at timestamptz not null default now()
 );
 
+
+-- Tracking table strategy:
+-- Keep the existing team_quarterly_* tables as the source of truth for the
+-- current quarterly runner and result routes. The team_tracking_* tables below
+-- are added for the requested tracking nomenclature and future monthly/custom
+-- tracking work; they intentionally do not replace or rename team_quarterly_*
+-- so src/db/teamQuarterlyJobs.js and src/services/teamQuarterlyRunner.js keep
+-- working without a data migration. Until dedicated tracking runners and result
+-- routes are introduced, team_performance aggregates completed quarterly output
+-- from team_quarterly_* and UI links should continue to target
+-- /team/quarterly-jobs/:jobId/results.
+
 create table if not exists team_tracking_jobs (
   id uuid primary key default gen_random_uuid(),
   member_id uuid references team_members(id) on delete set null,
@@ -128,8 +140,8 @@ select
   m.default_property_url,
   coalesce(u.url_count, 0)::int as url_count,
   j.id as latest_job_id,
-  j.period_label as latest_period,
-  j.period_label as latest_quarter,
+  j.quarter_label as latest_period,
+  j.quarter_label as latest_quarter,
   j.status as last_job_status,
   coalesce(s.previous_clicks, 0)::int as previous_clicks,
   coalesce(s.current_clicks, 0)::int as current_clicks,
@@ -139,6 +151,8 @@ select
   coalesce(s.impression_delta, 0)::int as impression_delta,
   coalesce(s.growing_urls, 0)::int as growing_urls,
   coalesce(s.declining_urls, 0)::int as declining_urls,
+  coalesce(s.new_traffic, 0)::int as new_traffic,
+  coalesce(s.lost_traffic, 0)::int as lost_traffic,
   m.created_at,
   m.updated_at
 from team_members m
@@ -149,7 +163,7 @@ left join lateral (
 ) u on true
 left join lateral (
   select *
-  from team_tracking_jobs
+  from team_quarterly_jobs
   where member_id = m.id and status in ('completed', 'partially_completed')
   order by coalesce(completed_at, updated_at, created_at) desc, created_at desc
   limit 1
@@ -163,8 +177,10 @@ left join lateral (
     coalesce(sum(current_impressions), 0) as current_impressions,
     coalesce(sum(impression_delta), 0) as impression_delta,
     count(*) filter (where status = 'Growing') as growing_urls,
-    count(*) filter (where status = 'Declining') as declining_urls
-  from team_tracking_results
+    count(*) filter (where status = 'Declining') as declining_urls,
+    count(*) filter (where status = 'New traffic') as new_traffic,
+    count(*) filter (where status = 'Lost traffic') as lost_traffic
+  from team_quarterly_url_results
   where job_id = j.id
 ) s on true;
 
