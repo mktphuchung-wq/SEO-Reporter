@@ -45,5 +45,5 @@ export function renderReportsPage({ jobs = [], user = null, authenticated = fals
       ${reportsContent}
     </section>
   `;
-  return renderLayout({ title: "Saved Reports · SEO Reporter", body, user, authenticated, activeNav });
+  return renderLayout({ title: "Saved Reports · SEO Reporter", pageTitle: "Saved Reports", pageDescription: "View and manage saved SEO report previews.", body, user, authenticated, activeNav });
 }
