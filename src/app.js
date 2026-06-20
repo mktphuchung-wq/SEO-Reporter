@@ -26,9 +26,10 @@ import { generateOpenRouterUrlCompareSummary } from "./ai/openRouterInsights.js"
 
 import { renderLayout } from "./ui/layout.js";
 import { renderAlert, renderMetricCard, renderStatusBadge } from "./ui/components.js";
-import { listTeamMembers, getTeamMember, createTeamMember, updateTeamMember, getTeamMemberPerformanceSummary } from "./db/teamMembers.js";
+import { listTeamMembers, getTeamMember, createTeamMember, updateTeamMember } from "./db/teamMembers.js";
 import { listUrlListsForMember, createUrlList, updateUrlList, parseAndNormalizeUrlList } from "./db/teamUrlLists.js";
-import { createQuarterlyJob, createQuarterlyJobBatches, getQuarterlyJob, listQuarterlyJobs, getQuarterlyJobResults, getTeamQuarterlyDashboardSummary } from "./db/teamQuarterlyJobs.js";
+import { createQuarterlyJob, createQuarterlyJobBatches, getQuarterlyJob, listQuarterlyJobs, getQuarterlyJobResults } from "./db/teamQuarterlyJobs.js";
+import { listTeamPerformance } from "./db/team.js";
 import { getMostRecentCompletedQuarter, getPreviousQuarterRange } from "./lib/reportPeriods.js";
 import { runNextTeamQuarterlyBatch } from "./services/teamQuarterlyRunner.js";
 
@@ -778,7 +779,49 @@ app.get("/team", async (req, res) => {
 });
 app.get("/team/new", (req,res)=>res.type("html").send(teamLayout(req,{title:"Add Team Member",pageTitle:"Add Team Member",body:`<form class="card" method="post" action="/team"><div class="field"><label>Name</label><input name="name" required></div><div class="field"><label>Email</label><input name="email" type="email"></div><div class="grid grid-2"><div class="field"><label>Role</label><select name="role"><option value="member">member</option><option value="admin">admin</option></select></div><div class="field"><label>Status</label><select name="status"><option value="active">active</option><option value="inactive">inactive</option></select></div></div><div class="field"><label>Default property URL</label><input name="defaultPropertyUrl"></div><div class="field"><label>Notes</label><textarea name="notes"></textarea></div><button class="btn" type="submit">Create member</button></form>`})));
 app.post("/team", async (req,res)=>{ try { const m=await createTeamMember(req.body); res.redirect(`/team/${m.id}`); } catch(error){ renderTeamDatabaseError(req, res, { title: "Add Team Member", pageTitle: "Add Team Member", status: 400 }, error); }});
-app.get("/team/performance", async (req,res)=>{ try { const [summary, rowsData]=await Promise.all([getTeamQuarterlyDashboardSummary(), getTeamMemberPerformanceSummary()]); const cards=`<div class="metric-grid">${renderMetricCard({label:"Total active members",value:n(summary.total_active_members)})}${renderMetricCard({label:"Total managed URLs",value:n(summary.total_managed_urls)})}${renderMetricCard({label:"Completed quarterly jobs",value:n(summary.completed_quarterly_jobs)})}${renderMetricCard({label:"Current clicks",value:n(summary.total_current_clicks),tone:"green"})}${renderMetricCard({label:"Current impressions",value:n(summary.total_current_impressions),tone:"blue"})}${renderMetricCard({label:"Growing URLs",value:n(summary.total_growing_urls),tone:"green"})}${renderMetricCard({label:"Declining URLs",value:n(summary.total_declining_urls),tone:"red"})}</div>`; const rows=rowsData.map(r=>`<tr>${td(`<a href="/team/${r.id}">${escapeHtml(r.name)}</a>`)}${td(escapeHtml(r.default_property_url||"—"))}${td(n(r.url_count))}${td(escapeHtml(r.latest_quarter||"—"))}${td(n(r.previous_clicks))}${td(n(r.current_clicks))}${td(n(r.click_delta))}${td(n(r.previous_impressions))}${td(n(r.current_impressions))}${td(n(r.impression_delta))}${td(n(r.growing_urls))}${td(n(r.declining_urls))}${td(r.last_job_status?renderStatusBadge(r.last_job_status):"—")}${td(`${r.latest_job_id?`<a class="btn btn-secondary" href="/team/quarterly-jobs/${r.latest_job_id}/results">Results</a>`:""} <form method="post" action="/team/${r.id}/run-quarterly" style="display:inline"><button class="btn btn-secondary">Run</button></form>`)}</tr>`); res.type("html").send(teamLayout(req,{title:"Team Performance",pageTitle:"Team Performance",activeNav:"team-performance",pageDescription:"Monitor quarterly URL performance by member.",body:cards+"<br>"+table(["Member","Property","URL count","Latest quarter","Previous clicks","Current clicks","Click delta","Previous impressions","Current impressions","Impression delta","Growing URLs","Declining URLs","Last job status","Action"],rows)})); } catch(error){ renderTeamDatabaseError(req, res, { title: "Team Performance", pageTitle: "Team Performance", activeNav: "team-performance" }, error); }});
+app.get("/team/performance", async (req, res) => {
+  try {
+    const rowsData = await listTeamPerformance();
+    const summary = rowsData.reduce(
+      (acc, row) => {
+        acc.totalManagedUrls += Number(row.url_count || 0);
+        acc.totalCurrentClicks += Number(row.current_clicks || 0);
+        acc.totalCurrentImpressions += Number(row.current_impressions || 0);
+        acc.growingUrls += Number(row.growing_urls || 0);
+        acc.decliningUrls += Number(row.declining_urls || 0);
+        if (row.status === "active") acc.activeMembers += 1;
+        return acc;
+      },
+      {
+        totalMembers: rowsData.length,
+        activeMembers: 0,
+        totalManagedUrls: 0,
+        totalCurrentClicks: 0,
+        totalCurrentImpressions: 0,
+        growingUrls: 0,
+        decliningUrls: 0,
+      },
+    );
+    const cards = `<div class="metric-grid">${renderMetricCard({ label: "Total members", value: n(summary.totalMembers) })}${renderMetricCard({ label: "Active members", value: n(summary.activeMembers) })}${renderMetricCard({ label: "Total managed URLs", value: n(summary.totalManagedUrls) })}${renderMetricCard({ label: "Total current clicks", value: n(summary.totalCurrentClicks), tone: "green" })}${renderMetricCard({ label: "Total current impressions", value: n(summary.totalCurrentImpressions), tone: "blue" })}${renderMetricCard({ label: "Growing URLs", value: n(summary.growingUrls), tone: "green" })}${renderMetricCard({ label: "Declining URLs", value: n(summary.decliningUrls), tone: "red" })}</div>`;
+    const rows = rowsData.map((r) => {
+      const actions = [
+        r.latest_job_id ? `<a class="btn btn-secondary" href="/team/quarterly-jobs/${r.latest_job_id}/results">View Latest Results</a>` : "",
+        `<form method="post" action="/team/${r.id}/run-quarterly" style="display:inline"><button class="btn btn-secondary" type="submit">Run</button></form>`,
+      ].filter(Boolean).join(" ");
+      return `<tr>${td(`<a href="/team/${r.id}">${escapeHtml(r.name)}</a>`)}${td(escapeHtml(r.email || "—"))}${td(escapeHtml(r.default_property_url || "—"))}${td(n(r.url_count))}${td(escapeHtml(r.latest_period || r.latest_quarter || "—"))}${td(n(r.previous_clicks))}${td(n(r.current_clicks))}${td(n(r.click_delta))}${td(n(r.previous_impressions))}${td(n(r.current_impressions))}${td(n(r.impression_delta))}${td(n(r.growing_urls))}${td(n(r.declining_urls))}${td(n(r.new_traffic))}${td(n(r.lost_traffic))}${td(r.last_job_status ? renderStatusBadge(r.last_job_status) : "—")}${td(actions)}</tr>`;
+    });
+    const performanceTable = rows.length
+      ? table(["Member", "Email", "Property", "URL Count", "Latest Period", "Previous Clicks", "Current Clicks", "Click Δ", "Previous Impressions", "Current Impressions", "Impression Δ", "Growing URLs", "Declining URLs", "New Traffic", "Lost Traffic", "Latest Job Status", "Actions"], rows)
+      : '<div class="empty-state"><p>No team performance data yet. Add members and run quarterly tracking.</p></div>';
+    res.type("html").send(teamLayout(req, { title: "Team Performance", pageTitle: "Team Performance", activeNav: "team-performance", pageDescription: "Monitor quarterly URL performance by member.", body: `${cards}<br>${performanceTable}` }));
+  } catch (error) {
+    if (isMissingRelationError(error)) {
+      res.status(500).type("html").send(renderLayout({ title: "Team Performance", pageTitle: "Team Performance", activeNav: "team-performance", authenticated: Boolean(getGoogleTokens(req)), user: req.session.user, body: renderMissingTeamSchemaMessage(error) }));
+      return;
+    }
+    renderTeamDatabaseError(req, res, { title: "Team Performance", pageTitle: "Team Performance", activeNav: "team-performance" }, error);
+  }
+});
 app.get("/team/quarterly-jobs/:jobId/status", async (req,res)=>{ const job=await getQuarterlyJob(req.params.jobId); if(!job) return res.status(404).send("Not found"); const refresh=!["completed","failed"].includes(job.status)?'<meta http-equiv="refresh" content="3">':''; const body=`${refresh}<div class="card"><h2>${escapeHtml(job.quarter_label)}</h2><p>Đang xử lý batch URL, uống miếng trà chờ chút xíu...</p><div style="height:16px;background:#e2e8f0;border-radius:999px"><div style="height:16px;width:${Number(job.progress||0)}%;background:#176b87;border-radius:999px"></div></div><p>${n(job.completed_batches)} / ${n(job.total_batches)} batches · ${n(job.processed_urls)} / ${n(job.total_urls)} URLs · ${renderStatusBadge(job.status)}</p><form method="post" action="/team/quarterly-jobs/${job.id}/process-next"><button class="btn">Process next batch now</button></form>${job.status==='completed'?`<p><a class="btn" href="/team/quarterly-jobs/${job.id}/results">View results</a> <a class="btn btn-secondary" href="/team/quarterly-jobs/${job.id}.csv">Export CSV</a></p>`:""}</div>`; res.type("html").send(teamLayout(req,{title:"Quarterly Job Status",pageTitle:"Quarterly Job Status",body})); });
 app.post("/team/quarterly-jobs/:jobId/process-next", async (req,res)=>{ try { const authClient=getAuthorizedClient(req); if(!authClient) return res.status(401).send("Authenticate Google first."); await runNextTeamQuarterlyBatch({jobId:req.params.jobId,authClient}); res.redirect(`/team/quarterly-jobs/${req.params.jobId}/status`); } catch(error){ res.status(500).type("html").send(teamLayout(req,{title:"Process batch",pageTitle:"Process batch",body:renderAlert({type:"error",message:safeErrorMessage(error)})})); }});
 app.get("/team/quarterly-jobs/:jobId/results", async (req,res)=>{ const job=await getQuarterlyJob(req.params.jobId); if(!job) return res.status(404).send("Not found"); if(!["completed","partially_completed"].includes(job.status)) return res.redirect(`/team/quarterly-jobs/${job.id}/status`); const results=await getQuarterlyJobResults(job.id); const sum=results.reduce((a,r)=>{a.prev+=Number(r.previous_clicks||0);a.cur+=Number(r.current_clicks||0);a.pi+=Number(r.previous_impressions||0);a.ci+=Number(r.current_impressions||0);a[r.status]=(a[r.status]||0)+1;return a;},{prev:0,cur:0,pi:0,ci:0}); const cards=`<div class="metric-grid">${renderMetricCard({label:"Total URLs",value:n(results.length)})}${renderMetricCard({label:"Growing URLs",value:n(sum.Growing),tone:"green"})}${renderMetricCard({label:"Declining URLs",value:n(sum.Declining),tone:"red"})}${renderMetricCard({label:"New traffic",value:n(sum["New traffic"])})}${renderMetricCard({label:"Lost traffic",value:n(sum["Lost traffic"])})}${renderMetricCard({label:"Low CTR",value:n(sum["High impressions low CTR"])})}${renderMetricCard({label:"Total current clicks",value:n(sum.cur)})}${renderMetricCard({label:"Click delta",value:n(sum.cur-sum.prev)})}</div>`; const rows=results.map(r=>`<tr>${td(escapeHtml(r.url))}${td(n(r.previous_clicks))}${td(n(r.current_clicks))}${td(n(r.click_delta))}${td(n(r.previous_impressions))}${td(n(r.current_impressions))}${td(n(r.impression_delta))}${td(renderStatusBadge(r.status))}${td(escapeHtml(r.insight||""))}</tr>`); res.type("html").send(teamLayout(req,{title:"Quarterly Results",pageTitle:"Quarterly Results",body:`<div class="actions"><a class="btn btn-secondary" href="/team/quarterly-jobs/${job.id}.csv">Export CSV</a></div><br>${cards}<br>${table(["URL","Previous clicks","Current clicks","Click delta","Previous impressions","Current impressions","Impression delta","Status","Insight"],rows)}`})); });
