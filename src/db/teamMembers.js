@@ -6,6 +6,7 @@ function validate(role = "member", status = "active") { if (!ROLES.has(role)) th
 
 export async function listTeamMembers() {
   const result = await query(`select m.*, coalesce(sum(l.url_count) filter (where l.status='active'),0)::int as url_count,
+    count(l.id) filter (where l.status='active' and l.url_count > 0)::int as active_url_list_count,
     j.id as latest_job_id, j.status as latest_job_status, j.quarter_label as latest_quarter,
     coalesce(s.current_clicks,0)::int as latest_current_clicks, coalesce(s.current_impressions,0)::int as latest_current_impressions
     from team_members m
