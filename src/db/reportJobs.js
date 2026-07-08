@@ -4,20 +4,12 @@ const VALID_STATUSES = new Set(["queued", "running", "completed", "failed"]);
 
 function clampProgress(progress) {
   const parsed = Number(progress);
-  if (!Number.isFinite(parsed)) {
-    return 0;
-  }
-  return Math.max(0, Math.min(100, Math.round(parsed)));
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : 0;
 }
 
-function normalizeTrackedKeywords(value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => String(item).trim()).filter(Boolean);
-  }
-  return String(value || "")
-    .split(/[\n,]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+function normalizeTrackedKeywordsText(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean).join("\n");
+  return String(value || "").trim();
 }
 
 function normalizeLimit(limit) {
@@ -25,172 +17,67 @@ function normalizeLimit(limit) {
   return Number.isFinite(parsed) ? Math.max(1, Math.min(100, parsed)) : 20;
 }
 
-function normalizeJob(row) {
-  return row || null;
-}
-
-function reportPeriodForReportType(reportType, reportPeriod) {
-  if (reportType === "monthly" || reportType === "quarterly") {
-    return reportType;
-  }
-  return reportPeriod || "custom";
-}
+function normalizeJob(row) { return row || null; }
+function reportPeriodForReportType(reportType, reportPeriod) { return reportType === "monthly" || reportType === "quarterly" ? reportType : reportPeriod || "custom"; }
 
 export async function createReportJob(input = {}) {
+  const inputJson = input.inputJson || {
+    siteUrl: input.propertyUrl || input.siteUrl,
+    searchType: input.searchType || "web",
+    reportType: input.reportType || input.filters?.reportType || "custom",
+    reportPeriod: input.reportPeriod || input.filters?.reportPeriod || "30d",
+    startDate: input.startDate || null,
+    endDate: input.endDate || null,
+    pageContains: String(input.pageContains || "").trim(),
+    trackedKeywords: normalizeTrackedKeywordsText(input.trackedKeywords),
+    enableAiInsights: Boolean(input.enableAiInsights),
+  };
   const result = await query(
     `insert into public.report_jobs (
-      user_email,
-      user_name,
-      property_url,
-      search_type,
-      report_period,
-      start_date,
-      end_date,
-      page_contains,
-      tracked_keywords,
-      status,
-      progress,
-      filters
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'queued', 0, $10)
+      user_email, user_name, property_url, search_type, report_type, report_period,
+      start_date, end_date, page_contains, tracked_keywords, enable_ai_insights,
+      status, progress, current_step, input_json, intermediate_json, filters
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'queued',0,'init',$12,$13,$14)
     returning *`,
     [
-      input.userEmail || null,
-      input.userName || null,
-      input.propertyUrl || input.siteUrl || null,
-      input.searchType || "web",
-      reportPeriodForReportType(input.reportType || input.filters?.reportType, input.reportPeriod || input.filters?.reportPeriod || "30d"),
-      input.startDate || null,
-      input.endDate || null,
-      String(input.pageContains || "").trim() || null,
-      normalizeTrackedKeywords(input.trackedKeywords),
-      input.filters || null,
+      input.userEmail || null, input.userName || null, inputJson.siteUrl || null, inputJson.searchType || "web",
+      inputJson.reportType || "custom", reportPeriodForReportType(inputJson.reportType, inputJson.reportPeriod),
+      inputJson.startDate || null, inputJson.endDate || null, inputJson.pageContains || null,
+      inputJson.trackedKeywords || null, Boolean(inputJson.enableAiInsights), inputJson, {}, input.filters || null,
     ],
   );
   return normalizeJob(result.rows[0]);
 }
 
-export async function getReportJob(id) {
-  const result = await query("select * from public.report_jobs where id = $1", [id]);
+export async function getReportJob(id) { const result = await query("select * from public.report_jobs where id = $1", [id]); return normalizeJob(result.rows[0]); }
+
+export async function updateReportJobFields(id, fields = {}) {
+  const allowed = new Set(["status","progress","current_step","intermediate_json","report_json","report_html","error_message","source_info","filters","ai_insights","started_at","completed_at"]);
+  const sets = []; const params = [id];
+  for (const [key, value] of Object.entries(fields)) {
+    if (!allowed.has(key)) continue;
+    params.push(["intermediate_json","report_json","source_info","filters","ai_insights"].includes(key) ? JSON.stringify(value ?? null) : value);
+    sets.push(`${key} = $${params.length}${["intermediate_json","report_json","source_info","filters","ai_insights"].includes(key) ? "::jsonb" : ""}`);
+  }
+  if (!sets.length) return getReportJob(id);
+  const result = await query(`update public.report_jobs set ${sets.join(", ")} where id=$1 returning *`, params);
   return normalizeJob(result.rows[0]);
 }
 
-export async function markReportJobRunning(id) {
-  const result = await query(
-    `update public.report_jobs
-     set status = 'running', progress = greatest(progress, 10), started_at = coalesce(started_at, now()), error_message = null
-     where id = $1
-     returning *`,
-    [id],
-  );
-  return normalizeJob(result.rows[0]);
-}
-
-export async function updateReportJobProgress(id, progress) {
-  const result = await query(
-    `update public.report_jobs
-     set progress = $2
-     where id = $1 and status in ('queued', 'running')
-     returning *`,
-    [id, clampProgress(progress)],
-  );
-  return normalizeJob(result.rows[0]);
-}
-
-export async function completeReportJob(id, { reportHtml, reportJson, sourceInfo, filters, aiInsights } = {}) {
-  const result = await query(
-    `update public.report_jobs
-     set status = 'completed',
-         progress = 100,
-         error_message = null,
-         report_html = $2,
-         report_json = $3,
-         source_info = $4,
-         filters = $5,
-         ai_insights = $6,
-         completed_at = now()
-     where id = $1
-     returning *`,
-    [id, reportHtml || null, reportJson || null, sourceInfo || null, filters || null, aiInsights || null],
-  );
-  return normalizeJob(result.rows[0]);
-}
-
-export async function failReportJob(id, errorMessage) {
-  const safeMessage = String(errorMessage || "Report generation failed.").slice(0, 2000);
-  const result = await query(
-    `update public.report_jobs
-     set status = 'failed', progress = 100, error_message = $2, completed_at = now()
-     where id = $1
-     returning *`,
-    [id, safeMessage],
-  );
-  return normalizeJob(result.rows[0]);
-}
+export async function markReportJobRunning(id) { return updateReportJobFields(id, { status: "running", progress: 10, started_at: new Date(), error_message: null }); }
+export async function updateReportJobProgress(id, progress) { return updateReportJobFields(id, { progress: clampProgress(progress) }); }
+export async function completeReportJob(id, { reportHtml, reportJson, sourceInfo, filters, aiInsights } = {}) { return updateReportJobFields(id, { status: "completed", progress: 100, current_step: "complete", report_html: reportHtml || null, report_json: reportJson || null, source_info: sourceInfo || null, filters: filters || null, ai_insights: aiInsights || null, error_message: null, completed_at: new Date() }); }
+export async function failReportJob(id, errorMessage) { return updateReportJobFields(id, { status: "failed", progress: 100, error_message: String(errorMessage || "Report generation failed.").slice(0, 2000), completed_at: new Date() }); }
 
 export async function listRecentReportJobs({ userEmail, limit } = {}) {
-  if (!userEmail) {
-    return [];
-  }
-
-  const result = await query(
-    `select id, user_email, user_name, property_url, search_type, report_period, start_date, end_date,
-            page_contains, status, progress, error_message, report_json, source_info, filters, ai_insights,
-            created_at, updated_at, started_at, completed_at
-     from public.report_jobs
-     where user_email = $1 and status = 'completed'
-     order by completed_at desc nulls last, created_at desc
-     limit $2`,
-    [userEmail, normalizeLimit(limit)],
-  );
+  if (!userEmail) return [];
+  const result = await query(`select id,user_email,user_name,property_url,search_type,report_type,report_period,start_date,end_date,page_contains,status,progress,current_step,error_message,report_json,source_info,filters,ai_insights,created_at,updated_at,started_at,completed_at from public.report_jobs where user_email=$1 order by created_at desc limit $2`, [userEmail, normalizeLimit(limit)]);
   return result.rows;
 }
 
 export async function saveReportJob({ userEmail, userName, reportPayload, reportHtml = null } = {}) {
-  const sourceInfo = reportPayload?.sourceInfo || {};
-  const filters = reportPayload?.filters || sourceInfo.filters || {};
-  const range = sourceInfo.range || reportPayload?.selectedPeriodOverview?.currentRange || {};
-  const result = await query(
-    `insert into public.report_jobs (
-      user_email,
-      user_name,
-      property_url,
-      search_type,
-      report_period,
-      start_date,
-      end_date,
-      page_contains,
-      tracked_keywords,
-      status,
-      progress,
-      report_html,
-      report_json,
-      source_info,
-      filters,
-      ai_insights,
-      started_at,
-      completed_at
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'completed', 100, $10, $11, $12, $13, $14, now(), now())
-    returning *`,
-    [
-      userEmail || null,
-      userName || null,
-      sourceInfo.property || sourceInfo.propertyUrl || null,
-      filters.searchType || 'web',
-      reportPeriodForReportType(filters.reportType, filters.reportPeriod),
-      range.start || null,
-      range.end || null,
-      String(filters.pageContains || '').trim() || null,
-      [],
-      reportHtml || null,
-      reportPayload || null,
-      sourceInfo || null,
-      filters || null,
-      reportPayload?.aiInsights || reportPayload?.keywordOpportunities?.aiInsights || null,
-    ],
-  );
-  return normalizeJob(result.rows[0]);
+  const sourceInfo = reportPayload?.sourceInfo || {}; const filters = reportPayload?.filters || sourceInfo.filters || {}; const range = sourceInfo.range || reportPayload?.selectedPeriodOverview?.currentRange || {};
+  const job = await createReportJob({ userEmail, userName, propertyUrl: sourceInfo.property || sourceInfo.propertyUrl, searchType: filters.searchType || "web", reportType: filters.reportType, reportPeriod: filters.reportPeriod, startDate: range.start, endDate: range.end, pageContains: filters.pageContains, trackedKeywords: "", enableAiInsights: Boolean(reportPayload?.aiInsights?.available), filters });
+  return completeReportJob(job.id, { reportHtml, reportJson: reportPayload, sourceInfo, filters, aiInsights: reportPayload?.aiInsights || reportPayload?.keywordOpportunities?.aiInsights || null });
 }
-
-export function isValidReportJobStatus(status) {
-  return VALID_STATUSES.has(status);
-}
+export function isValidReportJobStatus(status) { return VALID_STATUSES.has(status); }

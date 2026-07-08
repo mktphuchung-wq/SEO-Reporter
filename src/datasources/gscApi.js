@@ -7,6 +7,8 @@ const GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 export const MAX_ROW_LIMIT = 25000;
 const GSC_CACHE_TTL_SECONDS = Number.parseInt(process.env.GSC_CACHE_TTL_SECONDS || "300", 10);
 const GSC_KEYWORD_CHUNK_MIN_DAYS = Number.parseInt(process.env.GSC_KEYWORD_CHUNK_MIN_DAYS || "45", 10);
+const MAX_GSC_PAGE_ROWS = Number.parseInt(process.env.MAX_GSC_PAGE_ROWS || "100000", 10);
+const MAX_GSC_KEYWORD_ROWS = Number.parseInt(process.env.MAX_GSC_KEYWORD_ROWS || "100000", 10);
 
 function getCacheTtlSeconds() {
   return Number.isFinite(GSC_CACHE_TTL_SECONDS) && GSC_CACHE_TTL_SECONDS > 0 ? GSC_CACHE_TTL_SECONDS : 300;
@@ -232,6 +234,7 @@ async function fetchSearchAnalyticsRows({
   dimensions,
   pageContains,
   normalizer,
+  maxRows,
 }) {
   const cacheKey = buildGscCacheKey({ siteUrl, startDate, endDate, searchType, dimensions, pageContains });
   const cachedRows = getCache(cacheKey);
@@ -241,6 +244,7 @@ async function fetchSearchAnalyticsRows({
 
   const webmasters = google.webmasters({ version: "v3", auth });
   const allRows = [];
+  const effectiveMaxRows = Number.isFinite(Number(maxRows)) && Number(maxRows) > 0 ? Number(maxRows) : Infinity;
   let startRow = 0;
 
   while (true) {
@@ -260,6 +264,11 @@ async function fetchSearchAnalyticsRows({
     const rows = response.data.rows || [];
     appendNormalizedRows(allRows, rows, normalizer);
 
+    if (allRows.length >= effectiveMaxRows) {
+      allRows.length = effectiveMaxRows;
+      break;
+    }
+
     if (rows.length < MAX_ROW_LIMIT) {
       break;
     }
@@ -270,7 +279,7 @@ async function fetchSearchAnalyticsRows({
   return allRows;
 }
 
-async function fetchWithOptionalPageFilter({ siteUrl, startDate, endDate, searchType, keyFile, authClient, dimensions, normalizer, pageContains }) {
+async function fetchWithOptionalPageFilter({ siteUrl, startDate, endDate, searchType, keyFile, authClient, dimensions, normalizer, pageContains, maxRows }) {
   if (!siteUrl) {
     throw new Error("Missing siteUrl for GSC request.");
   }
@@ -283,7 +292,7 @@ async function fetchWithOptionalPageFilter({ siteUrl, startDate, endDate, search
   const trimmedFilter = String(pageContains || "").trim();
 
   if (!trimmedFilter) {
-    return fetchSearchAnalyticsRows({ siteUrl, startDate, endDate, searchType, auth, dimensions, normalizer });
+    return fetchSearchAnalyticsRows({ siteUrl, startDate, endDate, searchType, auth, dimensions, normalizer, maxRows });
   }
 
   try {
@@ -295,6 +304,7 @@ async function fetchWithOptionalPageFilter({ siteUrl, startDate, endDate, search
       auth,
       dimensions,
       normalizer,
+      maxRows,
       pageContains: trimmedFilter,
     });
   } catch (filteredError) {
@@ -307,6 +317,7 @@ async function fetchWithOptionalPageFilter({ siteUrl, startDate, endDate, search
         auth,
         dimensions,
         normalizer,
+        maxRows,
       });
       return unfilteredRows.filter((row) => String(row.url || "").includes(trimmedFilter));
     } catch (_unfilteredError) {
@@ -334,6 +345,7 @@ export async function fetchGscRows({
     pageContains,
     dimensions: ["date", "page"],
     normalizer: normalizePageRow,
+    maxRows: MAX_GSC_PAGE_ROWS,
   });
 }
 
@@ -362,6 +374,7 @@ export async function fetchGscKeywordRows({
           pageContains,
           dimensions,
           normalizer: normalizeKeywordRow,
+          maxRows: MAX_GSC_KEYWORD_ROWS,
         });
       }
       return chunkRows;
@@ -378,6 +391,7 @@ export async function fetchGscKeywordRows({
     pageContains,
     dimensions,
     normalizer: normalizeKeywordRow,
+    maxRows: MAX_GSC_KEYWORD_ROWS,
   });
 }
 

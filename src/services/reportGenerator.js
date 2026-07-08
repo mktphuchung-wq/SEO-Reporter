@@ -222,7 +222,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
   const reportPeriod = rawInput.reportPeriod || "30d";
   const pageContains = String(rawInput.pageContains || "").trim();
   const trackedKeywordsInput = rawInput.trackedKeywords || "";
-  const enableAiInsights = Boolean(rawInput.enableAiInsights);
+  const enableAiInsights = Boolean(rawInput.enableAiInsights) && isEnvEnabled(process.env.SYNC_REPORT_AI_ENABLED);
 
   const input = {
     sourceType,
@@ -302,7 +302,7 @@ export async function generateReportFromInput({ input: rawInput = {}, authClient
         nearPageOneKeywords,
         reportTablesForAI,
       })
-    : { available: false, message: "AI insight not requested." };
+    : { available: false, message: Boolean(rawInput.enableAiInsights) ? "AI insights unavailable" : "AI insight not requested." };
 
   const effectiveReportPeriod = reportType === "monthly" ? "monthly" : reportType === "quarterly" ? "quarterly" : reportPeriod;
 
