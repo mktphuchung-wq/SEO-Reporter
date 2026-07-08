@@ -41,6 +41,64 @@ import { runNextTeamQuarterlyBatch } from "./services/teamQuarterlyRunner.js";
 dotenv.config();
 
 const app = express();
+
+const reportJobProcessLocks = new Set();
+
+function userCanAccessReportJob(req, job) {
+  const ownerEmail = String(job?.user_email || job?.userEmail || "").trim().toLowerCase();
+  if (!ownerEmail) return true;
+  const sessionEmail = String(req.session?.user?.email || "").trim().toLowerCase();
+  return Boolean(sessionEmail && sessionEmail === ownerEmail);
+}
+
+function reportJobViewUrl(jobId) {
+  return `/reports/jobs/${encodeURIComponent(jobId)}/view`;
+}
+
+function reportJobProcessUrl(jobId) {
+  return `/reports/jobs/${encodeURIComponent(jobId)}/process-next`;
+}
+
+function reportJobStatusUrl(jobId) {
+  return `/reports/jobs/${encodeURIComponent(jobId)}/status.json`;
+}
+
+function serializeReportJobStatus(job) {
+  const jobId = String(job.id);
+  return {
+    ok: true,
+    jobId,
+    status: job.status || "queued",
+    progress: Math.max(0, Math.min(100, Number.parseInt(job.progress || 0, 10) || 0)),
+    currentStep: job.current_step || job.currentStep || "init",
+    createdAt: job.created_at || job.createdAt || null,
+    updatedAt: job.updated_at || job.updatedAt || null,
+    completedAt: job.completed_at || job.completedAt || null,
+    viewUrl: reportJobViewUrl(jobId),
+    processUrl: reportJobProcessUrl(jobId),
+    errorMessage: job.status === "failed" ? (job.error_message || job.error || "Report generation failed.") : null,
+  };
+}
+
+function wantsReportJobJson(req) {
+  return String(req.get("accept") || "").includes("application/json") || req.body?.ajax === true || req.body?.ajax === "1" || req.query?.ajax === "1";
+}
+
+function serializeProcessNextResponse(job, { ok = true, message = "Processed one report step." } = {}) {
+  const status = job?.status || "queued";
+  const payload = serializeReportJobStatus(job);
+  return {
+    ok: ok && status !== "failed",
+    jobId: payload.jobId,
+    status,
+    progress: payload.progress,
+    currentStep: payload.currentStep,
+    hasMore: ["queued", "running"].includes(status),
+    viewUrl: payload.viewUrl,
+    message,
+    ...(status === "failed" ? { error: payload.errorMessage || "Report generation failed." } : {}),
+  };
+}
 const OUTPUT_DIR = path.resolve("output");
 if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
   throw new Error("Missing required SESSION_SECRET in production. Set SESSION_SECRET to a strong random value.");
@@ -1223,9 +1281,9 @@ function renderReportStatusPage(job) {
   const updatedAt = job.updated_at || job.updatedAt;
   const errorMessage = job.error_message || job.error;
   const statusMessages = {
-    queued: "Report is queued. Preparing the tea...",
-    running: job.current_step === "ai_insights" ? "Đang nhờ AI đọc insight từ dữ liệu tóm tắt..." : "Đang lấy dữ liệu GSC, ăn miếng bánh uống miếng trà chờ chút xíu...",
-    completed: "Report is ready.",
+    queued: "Report is queued. Preparing the workspace...",
+    running: job.current_step === "ai_insights" ? "Đang nhờ AI đọc insight từ dữ liệu tóm tắt..." : "Đang xử lý báo cáo từng bước, ăn miếng bánh uống miếng trà chờ chút xíu...",
+    completed: "Report is ready",
     failed: "Report generation failed. Review the safe error message and try again.",
   };
   const progress = Math.max(0, Math.min(100, Number.parseInt(job.progress || 0, 10)));
@@ -1235,30 +1293,98 @@ function renderReportStatusPage(job) {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Report status</title>
-  ${isActive ? '<meta http-equiv="refresh" content="3" />' : ""}
-  <style>*{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden}body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at 10% 0%,rgba(44,110,73,.16),transparent 28%),#edf3ea;color:#12232e;margin:0}.shell{width:min(760px,94vw);margin:40px auto}.card{background:rgba(255,255,255,.94);border:1px solid #d7dfdc;border-radius:20px;padding:24px;box-shadow:0 20px 50px rgba(18,35,46,.1)}.badge{display:inline-block;border-radius:999px;padding:6px 10px;font-weight:800;text-transform:capitalize}.badge.green{background:#dcfce7;color:#15803d}.badge.orange{background:#ffedd5;color:#c2410c}.badge.blue{background:#dbeafe;color:#1d4ed8}.badge.red{background:#fee2e2;color:#b91c1c}.badge.gray{background:#e2e8f0;color:#475569}.bar{height:14px;background:#d7dfdc;border-radius:999px;overflow:hidden;margin:16px 0}.bar span{display:block;height:100%;background:#2c6e49;transition:width .22s ease}.tea-loader{text-align:center;background:#f8fafc;border:1px solid #d7dfdc;border-radius:16px;padding:18px;margin:16px 0}.tea-scene{position:relative;display:inline-flex;align-items:end;gap:10px;font-size:3rem}.steam{position:absolute;top:-18px;width:7px;height:24px;border-radius:999px;background:linear-gradient(rgba(44,110,73,.45),rgba(44,110,73,0));animation:steam-rise 1.6s ease-in-out infinite}.steam.one{left:24px}.steam.two{left:43px;animation-delay:.25s}.steam.three{left:62px;animation-delay:.5s}.status-message{font-weight:800;color:#2c6e49}.dots span{display:inline-block;width:6px;height:6px;margin-left:4px;border-radius:999px;background:#2c6e49;animation:dot-bounce 1s ease-in-out infinite}.dots span:nth-child(2){animation-delay:.15s}.dots span:nth-child(3){animation-delay:.3s}.error{white-space:pre-wrap;background:#fee2e2;border:1px solid #fca5a5;color:#7f1d1d;border-radius:8px;padding:10px}.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-flex;padding:10px 14px;border-radius:999px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:800;transition:transform .18s ease,background .18s ease}.btn:hover{transform:translateY(-1px);background:#23593b}.btn:active{transform:translateY(0)}.btn:focus-visible{outline:3px solid rgba(249,115,22,.35);outline-offset:2px}.btn.secondary{background:#fff;color:#2c6e49;border:1px solid #2c6e49}@keyframes steam-rise{0%,100%{opacity:.28;transform:translateY(7px) scale(.9)}50%{opacity:.8;transform:translateY(-4px) scale(1.05)}}@keyframes dot-bounce{0%,80%,100%{transform:translateY(0);opacity:.45}40%{transform:translateY(-5px);opacity:1}}@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}@media(max-width:620px){.shell{margin:18px auto}.card{padding:18px}.actions .btn{width:100%;justify-content:center}}</style>
+  <style>*{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden}body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at 10% 0%,rgba(44,110,73,.16),transparent 28%),#edf3ea;color:#12232e;margin:0}.shell{width:min(760px,94vw);margin:40px auto}.card{background:rgba(255,255,255,.94);border:1px solid #d7dfdc;border-radius:20px;padding:24px;box-shadow:0 20px 50px rgba(18,35,46,.1)}.badge{display:inline-block;border-radius:999px;padding:6px 10px;font-weight:800;text-transform:capitalize}.badge.green{background:#dcfce7;color:#15803d}.badge.orange{background:#ffedd5;color:#c2410c}.badge.blue{background:#dbeafe;color:#1d4ed8}.badge.red{background:#fee2e2;color:#b91c1c}.badge.gray{background:#e2e8f0;color:#475569}.bar{height:14px;background:#d7dfdc;border-radius:999px;overflow:hidden;margin:16px 0}.bar span{display:block;height:100%;background:#2c6e49;transition:width .22s ease}.tea-loader{text-align:center;background:#f8fafc;border:1px solid #d7dfdc;border-radius:16px;padding:18px;margin:16px 0}.tea-scene{position:relative;display:inline-flex;align-items:end;gap:10px;font-size:3rem}.steam{position:absolute;top:-18px;width:7px;height:24px;border-radius:999px;background:linear-gradient(rgba(44,110,73,.45),rgba(44,110,73,0));animation:steam-rise 1.6s ease-in-out infinite}.steam.one{left:24px}.steam.two{left:43px;animation-delay:.25s}.steam.three{left:62px;animation-delay:.5s}.status-message{font-weight:800;color:#2c6e49}.dots span{display:inline-block;width:6px;height:6px;margin-left:4px;border-radius:999px;background:#2c6e49;animation:dot-bounce 1s ease-in-out infinite}.dots span:nth-child(2){animation-delay:.15s}.dots span:nth-child(3){animation-delay:.3s}.error{white-space:pre-wrap;background:#fee2e2;border:1px solid #fca5a5;color:#7f1d1d;border-radius:8px;padding:10px}.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-flex;padding:10px 14px;border-radius:999px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:800;transition:transform .18s ease,background .18s ease}.btn:hover{transform:translateY(-1px);background:#23593b}.btn:active{transform:translateY(0)}.btn:focus-visible{outline:3px solid rgba(249,115,22,.35);outline-offset:2px}.btn.secondary{background:#fff;color:#2c6e49;border:1px solid #2c6e49}.btn[disabled]{opacity:.6;cursor:not-allowed}.auto-status{color:#475569;font-weight:700}.auto-status.ready{color:#15803d}.auto-status.error{color:#b91c1c}@keyframes steam-rise{0%,100%{opacity:.28;transform:translateY(7px) scale(.9)}50%{opacity:.8;transform:translateY(-4px) scale(1.05)}}@keyframes dot-bounce{0%,80%,100%{transform:translateY(0);opacity:.45}40%{transform:translateY(-5px);opacity:1}}@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}@media(max-width:620px){.shell{margin:18px auto}.card{padding:18px}.actions .btn{width:100%;justify-content:center}}</style>
 </head>
 <body>
   <main class="shell">
-    <section class="card">
+    <section class="card" id="reportStatusApp" data-job-id="${escapeHtml(job.id)}" data-status-url="${escapeHtml(reportJobStatusUrl(job.id))}" data-process-url="${escapeHtml(reportJobProcessUrl(job.id))}" data-view-url="${escapeHtml(reportJobViewUrl(job.id))}">
       <h1>Report status</h1>
       <p>Job <code>${escapeHtml(job.id)}</code></p>
-      <p><span class="badge ${escapeHtml(statusTone)}">${escapeHtml(normalizedStatus)}</span></p>
-      ${isActive ? `<div class="tea-loader" role="status" aria-live="polite"><div class="tea-scene" aria-hidden="true"><span class="steam one"></span><span class="steam two"></span><span class="steam three"></span><span>☕</span><span>🍰</span></div><p class="status-message">${escapeHtml(statusMessages[normalizedStatus])}<span class="dots"><span></span><span></span><span></span></span></p><p>Trang này tự làm mới nhẹ nhàng mỗi 3 giây.</p></div>` : `<p class="status-message">${escapeHtml(statusMessages[normalizedStatus] || normalizedStatus)}</p>`}
-      <div class="bar" aria-label="Progress"><span style="width:${escapeHtml(progress)}%"></span></div>
-      <p><strong>Progress:</strong> ${escapeHtml(progress)}%</p>
-      <p><strong>Current step:</strong> ${escapeHtml(job.current_step || "init")}</p>
+      <p><span class="badge ${escapeHtml(statusTone)}" data-status-badge>${escapeHtml(normalizedStatus)}</span></p>
+      ${isActive ? `<div class="tea-loader" role="status" aria-live="polite"><div class="tea-scene" aria-hidden="true"><span class="steam one"></span><span class="steam two"></span><span class="steam three"></span><span>☕</span><span>🍰</span></div><p class="status-message" data-status-message>${escapeHtml(statusMessages[normalizedStatus])}<span class="dots"><span></span><span></span><span></span></span></p><p>Trang này tự xử lý từng bước và cập nhật tiến trình tự động.</p><p class="auto-status" data-auto-status>Auto processing is running...</p></div>` : `<p class="status-message" data-status-message>${escapeHtml(statusMessages[normalizedStatus] || normalizedStatus)}</p><p class="auto-status ${normalizedStatus === "completed" ? "ready" : normalizedStatus === "failed" ? "error" : ""}" data-auto-status>${normalizedStatus === "completed" ? "Report is ready" : normalizedStatus === "failed" ? "Auto processing stopped." : ""}</p>`}
+      <div class="bar" aria-label="Progress"><span data-progress-bar style="width:${escapeHtml(progress)}%"></span></div>
+      <p><strong>Progress:</strong> <span data-progress-number>${escapeHtml(progress)}</span>%</p>
+      <p><strong>Current step:</strong> <span data-current-step>${escapeHtml(job.current_step || "init")}</span></p>
       <p><strong>Created:</strong> ${escapeHtml(formatJobTimestamp(createdAt))}</p>
-      <p><strong>Updated:</strong> ${escapeHtml(formatJobTimestamp(updatedAt))}</p>
+      <p><strong>Updated:</strong> <span data-updated-at>${escapeHtml(formatJobTimestamp(updatedAt))}</span></p>
       ${normalizedStatus === "failed" ? `<div class="error">${escapeHtml(errorMessage || "Report generation failed.")}</div>` : ""}
       <div class="actions">
         ${normalizedStatus === "completed" ? `<a class="btn" href="/reports/jobs/${encodeURIComponent(job.id)}/view">View Report</a><a class="btn secondary" href="/reports/${encodeURIComponent(job.id)}/download">Download HTML + CSS + Script</a>` : ""}
-        ${isActive ? `<form method="post" action="/reports/jobs/${encodeURIComponent(job.id)}/process-next" style="margin:0"><button class="btn" type="submit">Process next step now</button></form>` : ""}
+        ${isActive ? `<form method="post" action="/reports/jobs/${encodeURIComponent(job.id)}/process-next" style="margin:0"><button class="btn" data-manual-process-button type="submit">Process next step now</button></form>` : ""}
         <a class="btn secondary" href="/reports">Saved Reports</a>
         <a class="btn secondary" href="/">Back to builder</a>
       </div>
     </section>
   </main>
+<script>
+(function(){
+  const root = document.getElementById("reportStatusApp");
+  if (!root) return;
+  const statusUrl = root.dataset.statusUrl;
+  const processUrl = root.dataset.processUrl;
+  const viewUrl = root.dataset.viewUrl;
+  const badge = root.querySelector("[data-status-badge]");
+  const bar = root.querySelector("[data-progress-bar]");
+  const number = root.querySelector("[data-progress-number]");
+  const step = root.querySelector("[data-current-step]");
+  const updated = root.querySelector("[data-updated-at]");
+  const message = root.querySelector("[data-status-message]");
+  const autoStatus = root.querySelector("[data-auto-status]");
+  const manualButton = root.querySelector("[data-manual-process-button]");
+  let isProcessing = false;
+  let stopped = false;
+  let failures = 0;
+
+  function tone(status){ return status === "completed" ? "green" : status === "queued" ? "orange" : status === "running" ? "blue" : status === "failed" ? "red" : "gray"; }
+  function statusMessage(status, currentStep){
+    if (status === "queued") return "Report is queued. Preparing the workspace...";
+    if (status === "running") return currentStep === "ai_insights" ? "Đang nhờ AI đọc insight từ dữ liệu tóm tắt..." : "Đang xử lý báo cáo từng bước, ăn miếng bánh uống miếng trà chờ chút xíu...";
+    if (status === "completed") return "Report is ready";
+    if (status === "failed") return "Report generation failed. Review the safe error message and try again.";
+    return status || "queued";
+  }
+  function updateUi(data){
+    const status = data.status || "queued";
+    if (badge) { badge.textContent = status; badge.className = "badge " + tone(status); }
+    if (bar) bar.style.width = Math.max(0, Math.min(100, Number(data.progress || 0))) + "%";
+    if (number) number.textContent = Math.max(0, Math.min(100, Number(data.progress || 0)));
+    if (step) step.textContent = data.currentStep || "init";
+    if (updated && data.updatedAt) updated.textContent = new Date(data.updatedAt).toLocaleString();
+    if (message) message.childNodes[0].nodeValue = statusMessage(status, data.currentStep);
+    if (autoStatus) {
+      autoStatus.className = "auto-status" + (status === "completed" ? " ready" : status === "failed" ? " error" : "");
+      autoStatus.textContent = status === "completed" ? "Report is ready" : status === "failed" ? (data.error || data.errorMessage || "Auto processing stopped.") : "Auto processing is running...";
+    }
+  }
+  function delay(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
+  async function loop(){
+    if (stopped || isProcessing) return;
+    isProcessing = true;
+    if (manualButton) manualButton.disabled = true;
+    try {
+      const res = await fetch(processUrl, { method: "POST", headers: { "Accept": "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ ajax: true }) });
+      const data = await res.json();
+      updateUi(data);
+      failures = 0;
+      if (data.status === "completed") { stopped = true; await delay(1000); window.location.href = data.viewUrl || viewUrl; return; }
+      if (data.status === "failed" || data.ok === false) { stopped = true; return; }
+    } catch (error) {
+      failures += 1;
+      if (autoStatus) autoStatus.textContent = failures >= 5 ? "Auto processing paused. You can retry manually." : "Network hiccup. Retrying auto processing...";
+      if (failures >= 5) { stopped = true; return; }
+    } finally {
+      isProcessing = false;
+      if (manualButton) manualButton.disabled = false;
+    }
+    const baseDelay = failures > 0 ? 5000 : (document.hidden ? 9000 : 2500);
+    await delay(baseDelay);
+    loop();
+  }
+  document.addEventListener("visibilitychange", function(){ if (!document.hidden && !stopped) loop(); });
+  if (statusUrl) fetch(statusUrl, { headers: { "Accept": "application/json" } }).then(r => r.ok ? r.json() : null).then(data => { if (data) updateUi(data); }).catch(function(){});
+  if (["queued", "running"].includes((badge && badge.textContent || "").trim().toLowerCase())) loop();
+})();
+</script>
 </body>
 </html>`;
 }
@@ -1305,10 +1431,22 @@ app.get("/reports", async (req, res) => {
   }
 });
 
+app.get("/reports/jobs/:jobId/status.json", async (req, res) => {
+  try {
+    const job = await getReportJob(req.params.jobId);
+    if (!job) return res.status(404).json({ ok: false, error: "Job not found" });
+    if (!userCanAccessReportJob(req, job)) return res.status(403).json({ ok: false, error: "Forbidden" });
+    res.json(serializeReportJobStatus(job));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: safeErrorMessage(error, "Unable to load report job.") });
+  }
+});
+
 app.get("/reports/jobs/:jobId/status", async (req, res) => {
   try {
     const job = await getReportJob(req.params.jobId);
     if (!job) return res.status(404).type("text").send("Report job not found.");
+    if (!userCanAccessReportJob(req, job)) return res.status(403).type("text").send("Forbidden");
     res.type("html").send(renderReportStatusPage(job));
   } catch (error) {
     res.status(500).type("text").send(safeErrorMessage(error, "Unable to load report job."));
@@ -1316,13 +1454,38 @@ app.get("/reports/jobs/:jobId/status", async (req, res) => {
 });
 
 app.post("/reports/jobs/:jobId/process-next", async (req, res) => {
+  const jsonResponse = wantsReportJobJson(req);
   try {
-    const authClient = getAuthorizedClient(req);
-    const job = await processNextReportJobStep({ jobId: req.params.jobId, authClient });
-    if (String(req.get("accept") || "").includes("application/json")) return res.json(job);
-    res.redirect(`/reports/jobs/${encodeURIComponent(req.params.jobId)}/status`);
+    const existingJob = await getReportJob(req.params.jobId);
+    if (!existingJob) {
+      if (jsonResponse) return res.status(404).json({ ok: false, error: "Job not found" });
+      return res.status(404).type("text").send("Report job not found.");
+    }
+    if (!userCanAccessReportJob(req, existingJob)) {
+      if (jsonResponse) return res.status(403).json({ ok: false, error: "Forbidden" });
+      return res.status(403).type("text").send("Forbidden");
+    }
+    if (["completed", "failed"].includes(existingJob.status)) {
+      if (jsonResponse) return res.json(serializeProcessNextResponse(existingJob, { message: "Report job is already finished." }));
+      return res.redirect(`/reports/jobs/${encodeURIComponent(req.params.jobId)}/status`);
+    }
+    if (reportJobProcessLocks.has(req.params.jobId)) {
+      if (jsonResponse) return res.json(serializeProcessNextResponse(existingJob, { message: "A report step is already processing." }));
+      return res.redirect(`/reports/jobs/${encodeURIComponent(req.params.jobId)}/status`);
+    }
+    reportJobProcessLocks.add(req.params.jobId);
+    try {
+      const authClient = getAuthorizedClient(req);
+      const job = await processNextReportJobStep({ jobId: req.params.jobId, authClient });
+      if (jsonResponse) return res.status(job.status === "failed" ? 500 : 200).json(serializeProcessNextResponse(job));
+      res.redirect(`/reports/jobs/${encodeURIComponent(req.params.jobId)}/status`);
+    } finally {
+      reportJobProcessLocks.delete(req.params.jobId);
+    }
   } catch (error) {
-    res.status(500).type("text").send(safeErrorMessage(error, "Unable to process report job."));
+    const safeMessage = safeErrorMessage(error, "Unable to process report job.");
+    if (jsonResponse) return res.status(500).json({ ok: false, status: "failed", progress: 0, error: safeMessage });
+    res.status(500).type("text").send(safeMessage);
   }
 });
 
