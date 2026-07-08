@@ -20,11 +20,13 @@ import { fetchGscUrlPerformance, filterVerifiedGscSiteEntries, listGscSites, nor
 import { query as dbQuery } from "./db/client.js";
 import { isMissingRelationError, renderMissingTeamSchemaMessage } from "./db/schemaGuards.js";
 import {
+  createReportJob,
   getReportJob,
   listRecentReportJobs,
   saveReportJob,
 } from "./db/reportJobs.js";
 import { generateReportFromInput } from "./services/reportGenerator.js";
+import { processNextReportJobStep } from "./services/reportJobRunner.js";
 import { generateOpenRouterUrlCompareSummary } from "./ai/openRouterInsights.js";
 
 import { renderLayout } from "./ui/layout.js";
@@ -57,6 +59,29 @@ const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 
 const PRESET_STORAGE_PATH = path.resolve(process.env.PRESET_STORAGE_PATH || ".data/presets.json");
 const PRESET_FIELDS = ["siteUrl", "searchType", "reportPeriod", "startDate", "endDate", "pageContains", "trackedKeywords", "enableAiInsights"];
+const REPORT_GENERATE_TIME_BUDGET_MS = Number.parseInt(process.env.REPORT_GENERATE_TIME_BUDGET_MS || "240000", 10);
+function normalizeReportJobInput(body = {}) {
+  return {
+    siteUrl: String(body.siteUrl || "").trim(),
+    searchType: String(body.searchType || "web").trim() || "web",
+    reportType: String(body.reportType || "custom").trim() || "custom",
+    reportPeriod: String(body.reportPeriod || "30d").trim() || "30d",
+    startDate: body.startDate || null,
+    endDate: body.endDate || null,
+    pageContains: String(body.pageContains || "").trim(),
+    trackedKeywords: String(body.trackedKeywords || "").trim(),
+    enableAiInsights: Boolean(body.enableAiInsights),
+  };
+}
+function validateReportJobInput(input = {}) {
+  if (!input.siteUrl) throw new Error("Please select a GSC property before generating report.");
+  return input;
+}
+async function createReportJobFromRequest(req) {
+  const input = validateReportJobInput(normalizeReportJobInput(req.body));
+  return createReportJob({ ...input, userEmail: req.session?.user?.email || null, userName: req.session?.user?.name || null, inputJson: input });
+}
+
 
 app.set("trust proxy", 1);
 app.use(
@@ -1198,10 +1223,10 @@ function renderReportStatusPage(job) {
   const updatedAt = job.updated_at || job.updatedAt;
   const errorMessage = job.error_message || job.error;
   const statusMessages = {
-    queued: "Báo cáo đang xếp hàng, pha trà một chút nhé...",
-    running: "Đang xử lý dữ liệu, bánh vẫn còn nóng...",
-    completed: "Báo cáo đã sẵn sàng!",
-    failed: "Có lỗi xảy ra, kiểm tra lại cấu hình hoặc thử chạy lại.",
+    queued: "Report is queued. Preparing the tea...",
+    running: job.current_step === "ai_insights" ? "Đang nhờ AI đọc insight từ dữ liệu tóm tắt..." : "Đang lấy dữ liệu GSC, ăn miếng bánh uống miếng trà chờ chút xíu...",
+    completed: "Report is ready.",
+    failed: "Report generation failed. Review the safe error message and try again.",
   };
   const progress = Math.max(0, Math.min(100, Number.parseInt(job.progress || 0, 10)));
   return `<!DOCTYPE html>
@@ -1210,7 +1235,7 @@ function renderReportStatusPage(job) {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Report status</title>
-  ${isActive ? '<meta http-equiv="refresh" content="8" />' : ""}
+  ${isActive ? '<meta http-equiv="refresh" content="3" />' : ""}
   <style>*{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden}body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at 10% 0%,rgba(44,110,73,.16),transparent 28%),#edf3ea;color:#12232e;margin:0}.shell{width:min(760px,94vw);margin:40px auto}.card{background:rgba(255,255,255,.94);border:1px solid #d7dfdc;border-radius:20px;padding:24px;box-shadow:0 20px 50px rgba(18,35,46,.1)}.badge{display:inline-block;border-radius:999px;padding:6px 10px;font-weight:800;text-transform:capitalize}.badge.green{background:#dcfce7;color:#15803d}.badge.orange{background:#ffedd5;color:#c2410c}.badge.blue{background:#dbeafe;color:#1d4ed8}.badge.red{background:#fee2e2;color:#b91c1c}.badge.gray{background:#e2e8f0;color:#475569}.bar{height:14px;background:#d7dfdc;border-radius:999px;overflow:hidden;margin:16px 0}.bar span{display:block;height:100%;background:#2c6e49;transition:width .22s ease}.tea-loader{text-align:center;background:#f8fafc;border:1px solid #d7dfdc;border-radius:16px;padding:18px;margin:16px 0}.tea-scene{position:relative;display:inline-flex;align-items:end;gap:10px;font-size:3rem}.steam{position:absolute;top:-18px;width:7px;height:24px;border-radius:999px;background:linear-gradient(rgba(44,110,73,.45),rgba(44,110,73,0));animation:steam-rise 1.6s ease-in-out infinite}.steam.one{left:24px}.steam.two{left:43px;animation-delay:.25s}.steam.three{left:62px;animation-delay:.5s}.status-message{font-weight:800;color:#2c6e49}.dots span{display:inline-block;width:6px;height:6px;margin-left:4px;border-radius:999px;background:#2c6e49;animation:dot-bounce 1s ease-in-out infinite}.dots span:nth-child(2){animation-delay:.15s}.dots span:nth-child(3){animation-delay:.3s}.error{white-space:pre-wrap;background:#fee2e2;border:1px solid #fca5a5;color:#7f1d1d;border-radius:8px;padding:10px}.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-flex;padding:10px 14px;border-radius:999px;background:#2c6e49;color:#fff;text-decoration:none;font-weight:800;transition:transform .18s ease,background .18s ease}.btn:hover{transform:translateY(-1px);background:#23593b}.btn:active{transform:translateY(0)}.btn:focus-visible{outline:3px solid rgba(249,115,22,.35);outline-offset:2px}.btn.secondary{background:#fff;color:#2c6e49;border:1px solid #2c6e49}@keyframes steam-rise{0%,100%{opacity:.28;transform:translateY(7px) scale(.9)}50%{opacity:.8;transform:translateY(-4px) scale(1.05)}}@keyframes dot-bounce{0%,80%,100%{transform:translateY(0);opacity:.45}40%{transform:translateY(-5px);opacity:1}}@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}@media(max-width:620px){.shell{margin:18px auto}.card{padding:18px}.actions .btn{width:100%;justify-content:center}}</style>
 </head>
 <body>
@@ -1219,14 +1244,16 @@ function renderReportStatusPage(job) {
       <h1>Report status</h1>
       <p>Job <code>${escapeHtml(job.id)}</code></p>
       <p><span class="badge ${escapeHtml(statusTone)}">${escapeHtml(normalizedStatus)}</span></p>
-      ${isActive ? `<div class="tea-loader" role="status" aria-live="polite"><div class="tea-scene" aria-hidden="true"><span class="steam one"></span><span class="steam two"></span><span class="steam three"></span><span>☕</span><span>🍰</span></div><p class="status-message">${escapeHtml(statusMessages[normalizedStatus])}<span class="dots"><span></span><span></span><span></span></span></p><p>Trang này tự làm mới nhẹ nhàng mỗi 8 giây.</p></div>` : `<p class="status-message">${escapeHtml(statusMessages[normalizedStatus] || normalizedStatus)}</p>`}
+      ${isActive ? `<div class="tea-loader" role="status" aria-live="polite"><div class="tea-scene" aria-hidden="true"><span class="steam one"></span><span class="steam two"></span><span class="steam three"></span><span>☕</span><span>🍰</span></div><p class="status-message">${escapeHtml(statusMessages[normalizedStatus])}<span class="dots"><span></span><span></span><span></span></span></p><p>Trang này tự làm mới nhẹ nhàng mỗi 3 giây.</p></div>` : `<p class="status-message">${escapeHtml(statusMessages[normalizedStatus] || normalizedStatus)}</p>`}
       <div class="bar" aria-label="Progress"><span style="width:${escapeHtml(progress)}%"></span></div>
       <p><strong>Progress:</strong> ${escapeHtml(progress)}%</p>
+      <p><strong>Current step:</strong> ${escapeHtml(job.current_step || "init")}</p>
       <p><strong>Created:</strong> ${escapeHtml(formatJobTimestamp(createdAt))}</p>
       <p><strong>Updated:</strong> ${escapeHtml(formatJobTimestamp(updatedAt))}</p>
       ${normalizedStatus === "failed" ? `<div class="error">${escapeHtml(errorMessage || "Report generation failed.")}</div>` : ""}
       <div class="actions">
-        ${normalizedStatus === "completed" ? `<a class="btn" href="/reports/${encodeURIComponent(job.id)}/view">View saved report</a><a class="btn secondary" href="/reports/${encodeURIComponent(job.id)}/download">Download HTML + CSS + Script</a>` : ""}
+        ${normalizedStatus === "completed" ? `<a class="btn" href="/reports/jobs/${encodeURIComponent(job.id)}/view">View Report</a><a class="btn secondary" href="/reports/${encodeURIComponent(job.id)}/download">Download HTML + CSS + Script</a>` : ""}
+        ${isActive ? `<form method="post" action="/reports/jobs/${encodeURIComponent(job.id)}/process-next" style="margin:0"><button class="btn" type="submit">Process next step now</button></form>` : ""}
         <a class="btn secondary" href="/reports">Saved Reports</a>
         <a class="btn secondary" href="/">Back to builder</a>
       </div>
@@ -1237,8 +1264,18 @@ function renderReportStatusPage(job) {
 }
 
 
-app.post("/reports", async (_req, res) => {
-  res.status(410).type("html").send(renderSafeSaveErrorPage("Async report jobs are disabled for preview-first persistence. Use Generate Preview, then click Save Report on the generated report page."));
+app.post("/reports", async (req, res) => {
+  const job = await createReportJobFromRequest(req);
+  res.redirect(`/reports/jobs/${encodeURIComponent(job.id)}/status`);
+});
+
+app.post("/reports/jobs", async (req, res) => {
+  try {
+    const job = await createReportJobFromRequest(req);
+    res.redirect(`/reports/jobs/${encodeURIComponent(job.id)}/status`);
+  } catch (error) {
+    res.status(400).type("text").send(safeErrorMessage(error, "Unable to create report job."));
+  }
 });
 
 app.post("/reports/save", async (req, res) => {
@@ -1266,6 +1303,31 @@ app.get("/reports", async (req, res) => {
   } catch (error) {
     res.status(500).type("html").send(`<p>${escapeHtml(safeErrorMessage(error, "Unable to load report history."))}</p><p><a href="/">Back to builder</a></p>`);
   }
+});
+
+app.get("/reports/jobs/:jobId/status", async (req, res) => {
+  try {
+    const job = await getReportJob(req.params.jobId);
+    if (!job) return res.status(404).type("text").send("Report job not found.");
+    res.type("html").send(renderReportStatusPage(job));
+  } catch (error) {
+    res.status(500).type("text").send(safeErrorMessage(error, "Unable to load report job."));
+  }
+});
+
+app.post("/reports/jobs/:jobId/process-next", async (req, res) => {
+  try {
+    const authClient = getAuthorizedClient(req);
+    const job = await processNextReportJobStep({ jobId: req.params.jobId, authClient });
+    if (String(req.get("accept") || "").includes("application/json")) return res.json(job);
+    res.redirect(`/reports/jobs/${encodeURIComponent(req.params.jobId)}/status`);
+  } catch (error) {
+    res.status(500).type("text").send(safeErrorMessage(error, "Unable to process report job."));
+  }
+});
+
+app.get("/reports/jobs/:jobId/view", (req, res) => {
+  res.redirect(`/reports/${encodeURIComponent(req.params.jobId)}/view`);
 });
 
 app.get("/reports/:id/status", async (req, res) => {
@@ -1331,6 +1393,16 @@ app.use("/reports", express.static(OUTPUT_DIR));
 
 app.post("/generate", async (req, res) => {
   try {
+    if (!isEnvEnabled(process.env.ENABLE_SYNC_GENERATE)) {
+      const job = await createReportJobFromRequest(req);
+      res.redirect(`/reports/jobs/${encodeURIComponent(job.id)}/status`);
+      return;
+    }
+    const startedAt = Date.now();
+    if (REPORT_GENERATE_TIME_BUDGET_MS >= 300000 || Date.now() - startedAt > REPORT_GENERATE_TIME_BUDGET_MS) {
+      res.status(202).type("html").send("This report is too large to generate synchronously. Please use background report generation.");
+      return;
+    }
     const authClient = getAuthorizedClient(req);
     const { reportHtml } = await generateReportFromBody({ body: req.body, authClient, sessionObject: req.session });
     res.type("html").send(reportHtml);

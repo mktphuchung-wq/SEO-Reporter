@@ -1,5 +1,5 @@
 const OPENROUTER_CHAT_COMPLETIONS_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_OPENROUTER_TIMEOUT_MS = 30000;
+const DEFAULT_OPENROUTER_TIMEOUT_MS = 20000;
 const DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
 const DEFAULT_OPENROUTER_MAX_OUTPUT_TOKENS = 3500;
 const MAX_TABLE_ROWS_FOR_AI = 10;
