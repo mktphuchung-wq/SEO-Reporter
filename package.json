@@ -7,9 +7,10 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "generate": "node src/cli.js",
-    "build": "find api src -name '*.js' -print0 | xargs -0 -n1 node --check",
+    "build": "next build && find api src -name '*.js' -print0 | xargs -0 -n1 node --check",
     "express:start": "node src/server.js",
-    "express:dev": "node --watch src/server.js"
+    "express:dev": "node --watch src/server.js",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",
